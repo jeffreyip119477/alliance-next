@@ -398,9 +398,9 @@ export default function AllianceCombinationsCalculator() {
     }
 
     try {
-      return value.toLocaleString("en-US", {
+      return value.toLocaleString("zh-HK", {
         style: "currency",
-        currency: "USD",
+        currency: "HKD",
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       });
@@ -431,9 +431,7 @@ export default function AllianceCombinationsCalculator() {
 
   return (
     <div className="container mx-auto py-8 px-4">
-      <h1 className="text-3xl font-bold mb-6">
-        Contract Assignment with DoP Discounts
-      </h1>
+      <h1 className="text-3xl font-bold mb-6">Alliance Combinations (v3)</h1>
 
       <Tabs
         defaultValue="manual"
@@ -474,12 +472,12 @@ export default function AllianceCombinationsCalculator() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="tenderers">Tenderers ({tenderers})</Label>
-                  <span className="text-sm text-muted-foreground">1-20</span>
+                  <span className="text-sm text-muted-foreground">1-40</span>
                 </div>
                 <Slider
                   id="tenderers"
                   min={1}
-                  max={20}
+                  max={40}
                   step={1}
                   value={[tenderers]}
                   onValueChange={(value) => setTenderers(value[0])}
