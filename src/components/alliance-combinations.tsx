@@ -19,6 +19,27 @@ import {
 import { Info } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
+// Define types for results and combinations
+interface Combination {
+  assignment: number[];
+  contractCosts: number[];
+  total: number;
+  tendererCounts: number[];
+}
+
+interface Results {
+  totalLowestBase: number;
+  totalSelectedDiscounted: number;
+  costSaving: number;
+  combinations: Combination[];
+  bestCombo: Combination | null;
+  totalCombos: number;
+  totalPossibleCombos: number;
+  prices: number[][];
+  discounts: number[][][];
+  dopDifferences?: boolean[][];
+}
+
 export default function AllianceCombinationsCalculator() {
   const [contracts, setContracts] = useState(2);
   const [tenderers, setTenderers] = useState(2);
@@ -26,23 +47,18 @@ export default function AllianceCombinationsCalculator() {
   const [useAverageDOP, setUseAverageDOP] = useState(false);
   const [prices, setPrices] = useState<number[][]>([]);
   const [discounts, setDiscounts] = useState<number[][][]>([]);
-  const [results, setResults] = useState<any>(null);
+  const [results, setResults] = useState<Results | null>(null);
   const [showDiscounts, setShowDiscounts] = useState(false);
-  const [activeTab, setActiveTab] = useState("manual");
+  const [activeTab, setActiveTab] = useState<"manual" | "random">("manual");
   const [priceMin, setPriceMin] = useState(450000);
   const [priceMax, setPriceMax] = useState(500000);
   const [discountMax, setDiscountMax] = useState(20);
-  const [displayedCombinations, setDisplayedCombinations] = useState(50); // New state for tracking displayed combinations
-
-  useEffect(() => {
-    initializePricesAndDiscounts();
-  }, [contracts, tenderers]);
+  const [displayedCombinations, setDisplayedCombinations] = useState(50);
 
   const initializePricesAndDiscounts = () => {
     const newPrices = Array(tenderers)
       .fill(0)
       .map(() => Array(contracts).fill(0));
-
     const newDiscounts = Array(tenderers)
       .fill(0)
       .map(() =>
@@ -55,8 +71,13 @@ export default function AllianceCombinationsCalculator() {
     setDiscounts(newDiscounts);
     setResults(null);
     setShowDiscounts(false);
-    setDisplayedCombinations(50); // Reset displayed combinations when reinitializing
+    setDisplayedCombinations(50);
   };
+
+  useEffect(() => {
+    initializePricesAndDiscounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenderers, contracts]);
 
   const handlePriceChange = (t: number, c: number, value: string) => {
     const newPrices = [...prices];
@@ -94,7 +115,7 @@ export default function AllianceCombinationsCalculator() {
         discounts[i][j] = Array(contracts).fill(0);
         discounts[i][j][0] = 0;
         for (let dop = 1; dop < contracts; dop++) {
-          let n = Math.random() * discountMax;
+          const n = Math.random() * discountMax;
           discounts[i][j][dop] = Number(n.toFixed(4));
         }
       }
@@ -114,7 +135,7 @@ export default function AllianceCombinationsCalculator() {
         useAverageDOP
       );
       setResults(results);
-      setDisplayedCombinations(50); // Reset displayed combinations when new results are calculated
+      setDisplayedCombinations(50);
     } catch (error) {
       console.error("Error calculating results:", error);
     }
@@ -140,7 +161,7 @@ export default function AllianceCombinationsCalculator() {
       setPrices(newPrices);
       setDiscounts(newDiscounts);
       setResults(results);
-      setDisplayedCombinations(50); // Reset displayed combinations when new results are calculated
+      setDisplayedCombinations(50);
     } catch (error) {
       console.error("Error calculating random results:", error);
     }
@@ -153,11 +174,11 @@ export default function AllianceCombinationsCalculator() {
     tenderers: number,
     threshold = 5000,
     useAverageDOP = false
-  ) => {
+  ): Results => {
     const n = contracts;
     const m = tenderers;
 
-    let processedDiscounts = discounts.map((tenderDiscounts) =>
+    const processedDiscounts = discounts.map((tenderDiscounts) =>
       tenderDiscounts.map((contractDops) => contractDops.slice())
     );
     if (useAverageDOP) {
@@ -243,12 +264,7 @@ export default function AllianceCombinationsCalculator() {
       .filter((idx) => idx !== -1);
     const numValidContracts = validContractIndices.length;
 
-    const combinations: {
-      assignment: number[];
-      contractCosts: number[];
-      total: number;
-      tendererCounts: number[];
-    }[] = [];
+    const combinations: Combination[] = [];
     let bestTotal = Infinity;
 
     if (numValidContracts === 0) {
@@ -418,7 +434,7 @@ export default function AllianceCombinationsCalculator() {
     ) {
       initializePricesAndDiscounts();
     }
-  }, [contracts, tenderers]);
+  }, [contracts, tenderers, prices, initializePricesAndDiscounts]);
 
   const safeArrayReduce = (arr: number[] | undefined, initialValue: number) => {
     if (!arr || !Array.isArray(arr)) return initialValue;
@@ -437,7 +453,7 @@ export default function AllianceCombinationsCalculator() {
         defaultValue="manual"
         value={activeTab}
         onValueChange={(value) => {
-          setActiveTab(value);
+          setActiveTab(value as "manual" | "random");
           if (value === "manual") {
             initializePricesAndDiscounts();
           }
@@ -668,12 +684,12 @@ export default function AllianceCombinationsCalculator() {
                   <Label htmlFor="random-tenderers">
                     Tenderers ({tenderers})
                   </Label>
-                  <span className="text-sm text-muted-foreground">1-20</span>
+                  <span className="text-sm text-muted-foreground">1-40</span>
                 </div>
                 <Slider
                   id="random-tenderers"
                   min={1}
-                  max={20}
+                  max={40}
                   step={1}
                   value={[tenderers]}
                   onValueChange={(value) => setTenderers(value[0])}
@@ -778,9 +794,7 @@ export default function AllianceCombinationsCalculator() {
                 </div>
                 {useAverageDOP &&
                   results.dopDifferences &&
-                  results.dopDifferences.some(
-                    (t: boolean[]) => t && t.some((d: boolean) => d)
-                  ) && (
+                  results.dopDifferences.some((t) => t && t.some((d) => d)) && (
                     <div className="flex items-center">
                       <span className="text-red-500 mr-2">Red text</span>
                       <span>Averaged discount percentage</span>
@@ -870,10 +884,8 @@ export default function AllianceCombinationsCalculator() {
                               price ===
                                 Math.min(
                                   ...results.prices
-                                    .map(
-                                      (tender: number[]) => tender && tender[c]
-                                    )
-                                    .filter((p: number) => p && p > 0)
+                                    .map((tender) => tender && tender[c])
+                                    .filter((p) => p && p > 0)
                                 );
 
                             return (
@@ -924,10 +936,8 @@ export default function AllianceCombinationsCalculator() {
                           const lowestBase = results.prices
                             ? Math.min(
                                 ...results.prices
-                                  .map(
-                                    (tender: number[]) => tender && tender[c]
-                                  )
-                                  .filter((p: number) => p && p > 0)
+                                  .map((tender) => tender && tender[c])
+                                  .filter((p) => p && p > 0)
                               )
                             : 0;
                           const dop =
@@ -1022,19 +1032,17 @@ export default function AllianceCombinationsCalculator() {
                       {Array.from({ length: tenderers }).map((_, t) => {
                         const tendererCosts = Array(contracts).fill(0);
                         if (
-                          results.bestCombo.contractCosts &&
-                          results.bestCombo.assignment
+                          results.bestCombo?.contractCosts &&
+                          results.bestCombo?.assignment
                         ) {
-                          results.bestCombo.contractCosts.forEach(
-                            (cost: number, c: number) => {
-                              if (results.bestCombo.assignment[c] === t) {
-                                tendererCosts[c] = cost || 0;
-                              }
+                          results.bestCombo.contractCosts.forEach((cost, c) => {
+                            if (results.bestCombo?.assignment[c] === t) {
+                              tendererCosts[c] = cost || 0;
                             }
-                          );
+                          });
                         }
                         const tendererTotal = tendererCosts.reduce(
-                          (sum: number, cost: number) => sum + (cost || 0),
+                          (sum, cost) => sum + (cost || 0),
                           0
                         );
 
@@ -1045,8 +1053,8 @@ export default function AllianceCombinationsCalculator() {
                               <TableCell
                                 key={c}
                                 className={
-                                  results.bestCombo.assignment &&
-                                  results.bestCombo.assignment[c] === t
+                                  results.bestCombo?.assignment &&
+                                  results.bestCombo?.assignment[c] === t
                                     ? "bg-blue-100"
                                     : ""
                                 }
@@ -1067,7 +1075,7 @@ export default function AllianceCombinationsCalculator() {
                       <TableRow className="bg-gray-50">
                         <TableCell className="font-bold">Total</TableCell>
                         {Array.from({ length: contracts }).map((_, c) => {
-                          const columnTotal = results.bestCombo.contractCosts
+                          const columnTotal = results.bestCombo?.contractCosts
                             ? results.bestCombo.contractCosts[c] || 0
                             : 0;
                           return (
@@ -1105,7 +1113,7 @@ export default function AllianceCombinationsCalculator() {
                     <TableBody>
                       {results.combinations
                         .slice(0, displayedCombinations)
-                        .map((combo: any, index: number) => {
+                        .map((combo, index) => {
                           if (!combo) return null;
 
                           const isBest = index === 0;
@@ -1118,18 +1126,18 @@ export default function AllianceCombinationsCalculator() {
                             if (!results.prices) continue;
 
                             const validPrices = results.prices
-                              .map((t: number[], i: number) => ({
+                              .map((t, i) => ({
                                 price: t && t[c],
                                 tenderer: i,
                               }))
-                              .filter((p: any) => p.price && p.price > 0);
+                              .filter((p) => p.price && p.price > 0);
 
                             if (validPrices.length > 0) {
                               const minPrice = Math.min(
-                                ...validPrices.map((p: any) => p.price)
+                                ...validPrices.map((p) => p.price)
                               );
                               const minTenderer = validPrices.find(
-                                (p: any) => p.price === minPrice
+                                (p) => p.price === minPrice
                               )?.tenderer;
                               if (minTenderer !== undefined) {
                                 lowestBaseAssignment[c] = minTenderer;
@@ -1138,12 +1146,9 @@ export default function AllianceCombinationsCalculator() {
                             }
                           }
 
-                          const isLowestBase =
-                            combo.assignment &&
-                            combo.assignment.every(
-                              (t: number, c: number) =>
-                                t === lowestBaseAssignment[c]
-                            );
+                          const isLowestBase = combo.assignment.every(
+                            (t, c) => t === lowestBaseAssignment[c]
+                          );
 
                           return (
                             <TableRow
