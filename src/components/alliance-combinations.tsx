@@ -29,7 +29,7 @@ export default function AllianceCombinationsCalculator() {
   const [results, setResults] = useState<any>(null);
   const [showDiscounts, setShowDiscounts] = useState(false);
   const [activeTab, setActiveTab] = useState("manual");
-  const [priceMin, setPriceMin] = useState(400000);
+  const [priceMin, setPriceMin] = useState(450000);
   const [priceMax, setPriceMax] = useState(500000);
   const [discountMax, setDiscountMax] = useState(20);
   const [displayedCombinations, setDisplayedCombinations] = useState(50); // New state for tracking displayed combinations
