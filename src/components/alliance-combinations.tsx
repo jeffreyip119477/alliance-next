@@ -603,7 +603,7 @@ export default function AllianceCombinationsCalculator() {
                       <Slider
                         id="random-tenderers"
                         min={1}
-                        max={40}
+                        max={20}
                         step={1}
                         value={[tenderers]}
                         onValueChange={(value) => setTenderers(value[0])}
@@ -611,7 +611,7 @@ export default function AllianceCombinationsCalculator() {
                       />
                       <div className="flex justify-between text-xs text-muted-foreground">
                         <span>1</span>
-                        <span>40</span>
+                        <span>20</span>
                       </div>
                     </div>
                   </div>
