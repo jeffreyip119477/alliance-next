@@ -8,10 +8,12 @@ import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Info, Calculator, Settings, Database, ChevronDown, ChevronUp, Download } from "lucide-react"
+import { Info, Calculator, Settings, Database, ChevronDown, ChevronUp, Download, History } from "lucide-react"
+import jsPDF from 'jspdf'
+import html2canvas from 'html2canvas'
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { useAllianceCombinations } from "../hooks/useAllianceCombinations"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -21,21 +23,22 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import HistorySidebar from "./history-sidebar"
 
 
 
-export default function AllianceCombinationsCalculator() {
+export default memo(function AllianceCombinationsCalculator() {
   const {
     contracts,
     setContracts,
     tenderers,
     setTenderers,
-    threshold,
-    setThreshold,
     useAverageDOP,
     setUseAverageDOP,
     prices,
+    setPrices,
     discounts,
+    setDiscounts,
     results,
     showDiscounts,
     setShowDiscounts,
@@ -55,12 +58,18 @@ export default function AllianceCombinationsCalculator() {
     formatCurrency,
     safeArrayReduce,
     loadMoreCombinations,
+    isLoadingFromHistory,
+    setIsLoadingFromHistory,
 
   } = useAllianceCombinations()
 
   const [showLegend, setShowLegend] = useState(true)
   const [tendererNames, setTendererNames] = useState<string[]>([])
   const [selectedContracts, setSelectedContracts] = useState<boolean[]>([])
+  const [shouldSaveToHistory, setShouldSaveToHistory] = useState(false)
+  const [showAbbreviatedAmounts, setShowAbbreviatedAmounts] = useState(true)
+  const historySidebarRef = useRef<{ refreshHistory: () => void }>(null)
+
 
   // Initialize tenderer names and selected contracts when tenderers or contracts change
   useEffect(() => {
@@ -79,19 +88,84 @@ export default function AllianceCombinationsCalculator() {
     }
   }, [tenderers, contracts, tendererNames.length, selectedContracts.length])
 
+  // Save to history when results are updated and shouldSaveToHistory is true
+  useEffect(() => {
+    if (shouldSaveToHistory && results) {
+      saveToHistory(results)
+      setShouldSaveToHistory(false)
+    }
+  }, [results, shouldSaveToHistory])
+
   // Add handler for tenderer name changes
-  const handleTendererNameChange = (index: number, name: string) => {
-    const newNames = [...tendererNames]
-    newNames[index] = name
-    setTendererNames(newNames)
-  }
+  const handleTendererNameChange = useCallback((index: number, name: string) => {
+    setTendererNames(prev => {
+      const newNames = [...prev]
+      newNames[index] = name
+      return newNames
+    })
+  }, [])
 
   // Add handler for contract selection changes
-  const handleContractSelectionChange = (index: number, selected: boolean) => {
-    const newSelection = [...selectedContracts]
-    newSelection[index] = selected
-    setSelectedContracts(newSelection)
-  }
+  const handleContractSelectionChange = useCallback((index: number, selected: boolean) => {
+    setSelectedContracts(prev => {
+      const newSelection = [...prev]
+      newSelection[index] = selected
+      return newSelection
+    })
+  }, [])
+
+  // Save calculation to history
+  const saveToHistory = useCallback((results: any) => {
+    try {
+      const historyItem = {
+        id: Date.now().toString(),
+        timestamp: Date.now(),
+        contracts,
+        tenderers,
+        totalLowestBase: results.totalLowestBase,
+        totalSelectedDiscounted: results.totalSelectedDiscounted,
+        costSaving: results.costSaving,
+        tendererNames: [...tendererNames],
+        selectedContracts: [...selectedContracts],
+        prices: prices.map(row => [...row]),
+        discounts: discounts.map(row => row.map(col => [...col]))
+      }
+
+      const existingHistory = localStorage.getItem('alliance-calculator-history')
+      const history = existingHistory ? JSON.parse(existingHistory) : []
+      history.unshift(historyItem) // Add to beginning
+
+      // Keep only last 50 items
+      if (history.length > 50) {
+        history.splice(50)
+      }
+
+      localStorage.setItem('alliance-calculator-history', JSON.stringify(history))
+
+      // Refresh the history sidebar
+      if (historySidebarRef.current) {
+        historySidebarRef.current.refreshHistory()
+      }
+    } catch (error) {
+      console.error('Error saving to history:', error)
+    }
+  }, [contracts, tenderers, tendererNames, selectedContracts, prices, discounts])
+
+  // Memoize expensive calculations
+  const selectedContractCount = useMemo(() =>
+    selectedContracts.filter(Boolean).length,
+    [selectedContracts]
+  )
+
+  const lowestBasePrices = useMemo(() => {
+    if (!results?.prices) return []
+    return Array(contracts).fill(0).map((_, c) => {
+      const validPrices = results.prices
+        .map((tender) => tender && tender[c])
+        .filter((p) => p && p > 0)
+      return validPrices.length > 0 ? Math.min(...validPrices) : 0
+    })
+  }, [results?.prices, contracts])
 
   // Replace the calculateSelectedResults function with this implementation
   const calculateSelectedResults = () => {
@@ -139,179 +213,426 @@ export default function AllianceCombinationsCalculator() {
       prices.splice(0, prices.length, ...tempPrices)
       discounts.splice(0, discounts.length, ...tempDiscounts)
 
+      // Set flag to save to history when results are updated
+      setShouldSaveToHistory(true)
+
       // Call the existing calculate function
       calculateResults()
 
-      // Restore the original prices and discounts
+      // Restore the original prices and discounts after a short delay
       setTimeout(() => {
         prices.splice(0, prices.length, ...originalPrices)
         discounts.splice(0, discounts.length, ...originalDiscounts)
-      }, 0)
+      }, 100)
     } catch (error) {
       console.error("Error calculating selected results:", error)
     }
   }
 
-  const exportToCSV = () => {
-    if (!results) return
-
-    let csvContent = "data:text/csv;charset=utf-8,"
-
-    // Add header
-    csvContent += "Alliance Combinations Results\r\n\r\n"
-    csvContent += `Total Lowest Base Prices,${results.totalLowestBase}\r\n`
-    csvContent += `Total Selected Discounted,${results.totalSelectedDiscounted}\r\n`
-    csvContent += `Cost Saving,${results.costSaving}\r\n\r\n`
-
-    // Add base prices
-    csvContent += "Base Prices\r\n"
-    let header = "Tenderer,"
-    for (let i = 0; i < contracts; i++) {
-      if (selectedContracts[i]) {
-        header += `C${i + 1},`
-      }
-    }
-    header += "Total\r\n"
-    csvContent += header
-
-    for (let t = 0; t < tenderers; t++) {
-      let row = `${tendererNames[t] || `T${t + 1}`},`
-      for (let c = 0; c < contracts; c++) {
-        if (selectedContracts[c]) {
-          row += `${results.prices && results.prices[t] ? results.prices[t][c] || 0 : 0},`
-        }
-      }
-      row += `${
-        results.prices && results.prices[t]
-          ? results.prices[t].filter((_, i) => selectedContracts[i]).reduce((sum, price) => sum + (price || 0), 0)
-          : 0
-      }\r\n`
-      csvContent += row
+  const exportToPDF = async () => {
+    if (!results) {
+      alert('No results to export. Please calculate results first.')
+      return
     }
 
-    // Add discounted amounts
-    csvContent += "\r\nDiscounted Amounts\r\n"
-    const discountHeader = "Tenderer,Contract,DoP,Base Price,Discount %,Discounted Amount\r\n"
-    csvContent += discountHeader
-
-    for (let t = 0; t < tenderers; t++) {
-      for (let c = 0; c < contracts; c++) {
-        if (!selectedContracts[c]) continue
-
-        const basePrice = results.prices && results.prices[t] ? results.prices[t][c] || 0 : 0
-        if (basePrice > 0) {
-          for (let dop = 0; dop < contracts; dop++) {
-            if (results.discounts && results.discounts[t] && results.discounts[t][c]) {
-              const discountPercentage = results.discounts[t][c][dop] || 0
-              const discountFraction = Number((discountPercentage / 100).toFixed(4))
-              const discountedAmount = Number((basePrice * (1 - discountFraction)).toFixed(2))
-
-              const row = `${tendererNames[t] || `T${t + 1}`},C${c + 1},${dop + 1},${basePrice},${discountPercentage},${discountedAmount}\r\n`
-              csvContent += row
-            }
-          }
-        }
-      }
-    }
-
-    // Add best combination
-    if (results.bestCombo) {
-      csvContent += "\r\nBest Combination\r\n"
-      csvContent += header
-
-      for (let t = 0; t < tenderers; t++) {
-        let row = `${tendererNames[t] || `T${t + 1}`},`
-        const tendererCosts = Array(contracts).fill(0)
-
-        if (results.bestCombo?.contractCosts && results.bestCombo?.assignment) {
-          results.bestCombo.contractCosts.forEach((cost, c) => {
-            if (results.bestCombo?.assignment[c] === t) {
-              tendererCosts[c] = cost || 0
-            }
-          })
-        }
-
-        for (let c = 0; c < contracts; c++) {
-          if (selectedContracts[c]) {
-            row += `${tendererCosts[c]},`
-          }
-        }
-
-        const tendererTotal = tendererCosts
-          .filter((_, i) => selectedContracts[i])
-          .reduce((sum, cost) => sum + (cost || 0), 0)
-        row += `${tendererTotal}\r\n`
-        csvContent += row
+    try {
+      // Get the results section element
+      const resultsElement = document.getElementById('results-section')
+      if (!resultsElement) {
+        console.error('Results section not found')
+        alert('Results section not found. Please try again.')
+        return
       }
 
-      // Add total row
-      let totalRow = "Total,"
-      for (let c = 0; c < contracts; c++) {
-        if (selectedContracts[c]) {
-          totalRow += `${results.bestCombo.contractCosts ? results.bestCombo.contractCosts[c] || 0 : 0},`
-        }
-      }
-      totalRow += `${results.bestCombo.total}\r\n`
-      csvContent += totalRow
-    }
-
-    // Add all combinations
-    if (results.combinations && results.combinations.length > 0) {
-      csvContent += "\r\nAll Combinations\r\n"
-      let comboHeader = "Combination #,"
-      for (let c = 0; c < contracts; c++) {
-        if (selectedContracts[c]) {
-          comboHeader += `C${c + 1} Tenderer,C${c + 1} Cost,`
-        }
-      }
-      comboHeader += "Total Cost\r\n"
-      csvContent += comboHeader
-
-      results.combinations.forEach((combo, index) => {
-        if (!combo) return
-
-        let row = `${index + 1},`
-        for (let c = 0; c < contracts; c++) {
-          if (selectedContracts[c]) {
-            const tenderer = combo.assignment && combo.assignment[c] !== undefined ? combo.assignment[c] : -1
-            const cost = combo.contractCosts && combo.contractCosts[c] !== undefined ? combo.contractCosts[c] : 0
-            row += `${tenderer >= 0 ? tendererNames[tenderer] || `T${tenderer + 1}` : "None"},${cost},`
-          }
-        }
-        row += `${combo.total}\r\n`
-        csvContent += row
+      console.log('Found results element:', resultsElement)
+      console.log('Element dimensions:', {
+        scrollWidth: resultsElement.scrollWidth,
+        scrollHeight: resultsElement.scrollHeight,
+        clientWidth: resultsElement.clientWidth,
+        clientHeight: resultsElement.clientHeight
       })
-    }
 
-    const encodedUri = encodeURI(csvContent)
-    const link = document.createElement("a")
-    link.setAttribute("href", encodedUri)
-    link.setAttribute("download", "alliance_combinations_results.csv")
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+      // Configure html2canvas options for better quality
+      const canvas = await html2canvas(resultsElement, {
+        scale: 1, // Start with scale 1 to avoid memory issues
+        useCORS: false,
+        allowTaint: true, // Allow tainting for better compatibility with modern CSS
+        backgroundColor: '#ffffff',
+        logging: false, // Disable logging to reduce noise
+        width: resultsElement.clientWidth,
+        height: resultsElement.clientHeight,
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: resultsElement.clientWidth,
+        windowHeight: resultsElement.clientHeight,
+        ignoreElements: (element) => {
+          // Ignore elements that might cause issues
+          return element.tagName === 'BUTTON' && (element.textContent?.includes('Load More') ?? false)
+        }
+      })
+
+      console.log('Canvas created:', {
+        width: canvas.width,
+        height: canvas.height
+      })
+
+      // Create PDF with landscape orientation
+      const doc = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4'
+      })
+
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const margin = 5
+
+      // Calculate image dimensions to fit the page
+      const imgWidth = pageWidth - 2 * margin
+      const imgHeight = (canvas.height * imgWidth) / canvas.width
+
+      console.log('PDF dimensions:', {
+        pageWidth,
+        pageHeight,
+        imgWidth,
+        imgHeight,
+        totalPages: Math.ceil(imgHeight / (pageHeight - 2 * margin))
+      })
+
+      // If content is taller than one page, split it
+      if (imgHeight > pageHeight - 2 * margin) {
+        // Calculate how many pages we need
+        const totalPages = Math.ceil(imgHeight / (pageHeight - 2 * margin))
+
+        for (let page = 0; page < totalPages; page++) {
+          if (page > 0) {
+            doc.addPage()
+          }
+
+          // Calculate the portion of the image for this page
+          const sourceY = (page * (pageHeight - 2 * margin) * canvas.width) / imgWidth
+          const sourceHeight = Math.min(
+            ((pageHeight - 2 * margin) * canvas.width) / imgWidth,
+            canvas.height - sourceY
+          )
+
+          // Create a temporary canvas for this page's portion
+          const pageCanvas = document.createElement('canvas')
+          const pageCtx = pageCanvas.getContext('2d')
+          if (!pageCtx) {
+            console.error('Could not get canvas context')
+            continue
+          }
+
+          pageCanvas.width = canvas.width
+          pageCanvas.height = sourceHeight
+
+          // Draw the portion of the original canvas
+          pageCtx.drawImage(
+            canvas,
+            0, sourceY, canvas.width, sourceHeight,
+            0, 0, canvas.width, sourceHeight
+          )
+
+          const pageImgData = pageCanvas.toDataURL('image/png')
+
+          // Add image to PDF
+          doc.addImage(
+            pageImgData,
+            'PNG',
+            margin,
+            margin,
+            imgWidth,
+            Math.min((sourceHeight * imgWidth) / canvas.width, pageHeight - 2 * margin)
+          )
+        }
+      } else {
+        // Single page - add the entire image
+        const imgData = canvas.toDataURL('image/png')
+        doc.addImage(imgData, 'PNG', margin, margin, imgWidth, imgHeight)
+      }
+
+      // Save the PDF
+      doc.save("alliance_combinations_results.pdf")
+      console.log('PDF saved successfully')
+
+    } catch (error) {
+      console.error('Error generating PDF:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      alert(`Error generating PDF: ${errorMessage}. Please try again.`)
+    }
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <header className="sticky top-0 z-999 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 shadow-sm">
-        <div className="container mx-auto py-4 px-4">
-          <div className="flex items-center justify-between">
+    <>
+      <style jsx global>{`
+        @media print {
+          /* Hide the history sidebar when printing */
+          .fixed.right-0 {
+            display: none !important;
+          }
+
+          /* Adjust main content to take full width when printing */
+          main {
+            padding-right: 1rem !important;
+            max-width: none !important;
+          }
+
+          /* Ensure colors are preserved in print */
+          .bg-\[#FF5E93\]\/20 {
+            background-color: rgba(255, 94, 147, 0.2) !important;
+          }
+          .bg-\[#00B2CA\]\/20 {
+            background-color: rgba(0, 178, 202, 0.2) !important;
+          }
+          .bg-gray-200 {
+            background-color: rgb(229, 231, 235) !important;
+          }
+          .bg-\[#00B2CA\]\/10 {
+            background-color: rgba(0, 178, 202, 0.1) !important;
+          }
+          .text-\[#00B2CA\] {
+            color: rgb(0, 178, 202) !important;
+          }
+
+          /* Dark mode colors for print */
+          .dark .bg-\[#FF5E93\]\/30 {
+            background-color: rgba(255, 94, 147, 0.3) !important;
+          }
+          .dark .bg-\[#00B2CA\]\/30 {
+            background-color: rgba(0, 178, 202, 0.3) !important;
+          }
+          .dark .bg-gray-700 {
+            background-color: rgb(55, 65, 81) !important;
+          }
+          .dark .bg-\[#00B2CA\]\/20 {
+            background-color: rgba(0, 178, 202, 0.2) !important;
+          }
+          .dark .text-\[#00B2CA\] {
+            color: rgb(0, 178, 202) !important;
+          }
+
+          /* Hide UI elements that shouldn't be printed */
+          button[aria-label="Close"],
+          .lucide-x,
+          .lucide-chevron-up,
+          .lucide-chevron-down {
+            display: none !important;
+          }
+
+
+
+
+
+          /* Hide tabs and header */
+          [role="tablist"],
+          header {
+            display: none !important;
+          }
+
+          /* Hide main content padding and margins */
+          main {
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+
+          /* Hide the history sidebar */
+          .fixed.right-0 {
+            display: none !important;
+          }
+
+          /* Ensure table borders are visible in print */
+          table {
+            border-collapse: collapse !important;
+            width: 100% !important;
+            font-size: 10px !important;
+            table-layout: auto !important;
+          }
+          th, td {
+            border: 1px solid #e5e7eb !important;
+            padding: 2px 4px !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            max-width: none !important;
+          }
+
+          /* Handle wide tables by scaling them down */
+          .overflow-x-auto {
+            overflow-x: visible !important;
+            transform: scale(1) !important;
+            transform-origin: top left !important;
+            width: 100% !important;
+            margin-bottom: 15px !important;
+          }
+
+          /* Alternative: Make tables fit by reducing column widths */
+          .overflow-x-auto table {
+            font-size: 9px !important;
+          }
+
+          .overflow-x-auto th,
+          .overflow-x-auto td {
+            padding: 2px 3px !important;
+            min-width: 50px !important;
+            max-width: 100px !important;
+          }
+
+          /* Specific adjustments for base price and best combination tables */
+          .overflow-x-auto th:first-child,
+          .overflow-x-auto td:first-child {
+            min-width: 80px !important;
+            max-width: 120px !important;
+          }
+
+          /* Total column should be wider */
+          .overflow-x-auto th:last-child,
+          .overflow-x-auto td:last-child {
+            min-width: 70px !important;
+            max-width: 120px !important;
+          }
+
+          /* Sticky columns handling for print */
+          .sticky.left-0 {
+            position: static !important;
+          }
+
+
+
+
+
+          /* Handle page breaks for tables */
+          table {
+            page-break-inside: auto;
+          }
+          tr {
+            page-break-inside: avoid;
+            page-break-after: auto;
+          }
+          thead {
+            display: table-header-group;
+          }
+          tfoot {
+            display: table-footer-group;
+          }
+
+          /* Add page margins for better printing */
+          @page {
+            margin: 0.5in;
+            size: A4 landscape;
+          }
+
+          /* Reduce spacing for print */
+          .space-y-6 {
+            margin-top: 0.5rem !important;
+            margin-bottom: 0.5rem !important;
+          }
+
+          .space-y-4 {
+            margin-top: 0.25rem !important;
+            margin-bottom: 0.25rem !important;
+          }
+
+
+          /* Reduce spacing in Results Summary card for print */
+          #results-section .space-y-6 > .rounded-lg:first-child .mb-4 {
+            margin-bottom: 0.125rem !important;
+          }
+
+          #results-section .space-y-6 > .rounded-lg:first-child .gap-4 {
+            gap: 0.125rem !important;
+          }
+
+          #results-section .space-y-6 > .rounded-lg:first-child .mt-4 {
+            margin-top: 0.125rem !important;
+          }
+
+          /* Reduce padding in Results Summary card elements */
+          #results-section .space-y-6 > .rounded-lg:first-child .p-4 {
+            padding: 0.125rem !important;
+          }
+
+          #results-section .space-y-6 > .rounded-lg:first-child .p-3 {
+            padding: 0.0625rem !important;
+          }
+
+          /* Reduce CardHeader and CardContent padding for Results Summary */
+          #results-section .space-y-6 > .rounded-lg:first-child .pb-2 {
+            padding-bottom: 0.125rem !important;
+          }
+
+          /* Reduce spacing between CardContent elements */
+          #results-section .space-y-6 > .rounded-lg:first-child > div:last-child > div:not(:last-child) {
+            margin-bottom: 0.125rem !important;
+          }
+
+          /* Make summary boxes more compact */
+          #results-section .space-y-6 > .rounded-lg:first-child .text-2xl {
+            font-size: 0.875rem !important;
+            line-height: 1.1 !important;
+          }
+
+          #results-section .space-y-6 > .rounded-lg:first-child .text-sm {
+            font-size: 0.6875rem !important;
+            line-height: 1.1 !important;
+          }
+
+          /* Reduce Alert component spacing */
+          #results-section .space-y-6 > .rounded-lg:first-child [class*="Alert"] {
+            margin-top: 0.125rem !important;
+            padding: 0.125rem 0.25rem !important;
+          }
+
+          /* Specifically target Legend section spacing */
+          #results-section .space-y-6 > .rounded-lg:first-child .mb-2 {
+            margin-bottom: 0.0625rem !important;
+          }
+
+          #results-section .space-y-6 > .rounded-lg:first-child .gap-2 {
+            gap: 0.0625rem !important;
+          }
+
+          /* Make text smaller for print */
+          .text-2xl {
+            font-size: 1.25rem !important;
+          }
+
+          .text-xl {
+            font-size: 1.125rem !important;
+          }
+
+          /* Hide scroll areas in print */
+          [data-radix-scroll-area-viewport] {
+            overflow: visible !important;
+          }
+
+          /* Reduce inter-section spacing for space-y utilities */
+          .space-y-6 > :not([hidden]) ~ :not([hidden]) {
+            margin-top: 0.25rem !important;
+          }
+          .space-y-4 > :not([hidden]) ~ :not([hidden]) {
+            margin-top: 0.25rem !important;
+          }
+
+          /* Remove top margin before results for print */
+          #results-section {
+            margin-top: 0 !important;
+          }
+
+          /* Hide buttons in print */
+          button {
+            display: none !important;
+          }
+        }
+      `}</style>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex">
+        <main className="flex-1 container mx-auto py-8 px-4 pr-96">
+          <header className="mb-8">
             <div>
               <h1 className="text-2xl font-bold">Alliance Combinations Calculator</h1>
               <p className="text-sm text-muted-foreground">v3.1.0</p>
             </div>
-            {results && (
-              <Button variant="outline" size="sm" onClick={exportToCSV}>
-                <Download className="h-4 w-4 mr-2" />
-                Export Results
-              </Button>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <main className="container mx-auto py-8 px-4">
+          </header>
         <Tabs defaultValue="manual" value={activeTab} onValueChange={handleTabChange} className="space-y-8">
           <TabsList className="grid w-full grid-cols-2 max-w-md mx-auto">
             <TabsTrigger value="manual" className="flex items-center gap-2">
@@ -325,7 +646,7 @@ export default function AllianceCombinationsCalculator() {
           </TabsList>
 
           <TabsContent value="manual" className="space-y-6">
-            <Card>
+            <Card className="print:hidden">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Settings className="h-5 w-5" />
@@ -374,19 +695,7 @@ export default function AllianceCombinationsCalculator() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="threshold">Combination Threshold (Exhaustive if ≤)</Label>
-                  <Input
-                    id="threshold"
-                    type="number"
-                    min={1}
-                    value={threshold}
-                    onChange={(e) => setThreshold(Number.parseInt(e.target.value) || 5000)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Determines when to switch from exhaustive to branch-and-bound algorithm
-                  </p>
-                </div>
+
 
                 <div className="flex items-center space-x-2">
                   <Switch id="averageDOP" checked={useAverageDOP} onCheckedChange={setUseAverageDOP} />
@@ -412,7 +721,7 @@ export default function AllianceCombinationsCalculator() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="print:hidden">
               <CardHeader>
                 <CardTitle>Tenderer Names</CardTitle>
                 <CardDescription>Customize the names of tenderers for better identification</CardDescription>
@@ -435,7 +744,7 @@ export default function AllianceCombinationsCalculator() {
             </Card>
 
             {!showDiscounts ? (
-              <Card>
+              <Card className="print:hidden">
                 <CardHeader>
                   <CardTitle>Base Prices</CardTitle>
                   <CardDescription>Enter the base price for each tenderer and contract</CardDescription>
@@ -481,6 +790,7 @@ export default function AllianceCombinationsCalculator() {
                                         .filter((_, i) => selectedContracts[i])
                                         .reduce((sum, price) => sum + (price || 0), 0)
                                     : 0,
+                                  showAbbreviatedAmounts
                                 )}
                               </TableCell>
                             </TableRow>
@@ -508,6 +818,7 @@ export default function AllianceCombinationsCalculator() {
                         <TableHeader>
                           <TableRow>
                             <TableHead className="sticky left-0 bg-white dark:bg-gray-800 z-10">Tenderer</TableHead>
+                            <TableHead className="w-16 text-center">DoP</TableHead>
                             {Array.from({ length: contracts }).map((_, i) => (
                               <TableHead key={i} className={!selectedContracts[i] ? "opacity-50" : ""}>
                                 C{i + 1}
@@ -516,37 +827,37 @@ export default function AllianceCombinationsCalculator() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {Array.from({ length: tenderers }).map((_, t) => (
-                            <TableRow key={t}>
-                              <TableCell className="sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium">
-                                {tendererNames[t] || `T${t + 1}`}
-                              </TableCell>
-                              {Array.from({ length: contracts }).map((_, c) => (
-                                <TableCell key={c} className={`p-2 ${!selectedContracts[c] ? "opacity-50" : ""}`}>
-                                  <div className="space-y-2">
-                                    {/* Calculate the number of selected contracts to determine DoP levels */}
-                                    {Array.from({ length: selectedContracts.filter(Boolean).length }).map(
-                                      (_, dopIndex) => (
-                                        <div key={dopIndex} className="flex items-center space-x-2">
-                                          <span className="text-xs w-12">DoP {dopIndex + 1}:</span>
-                                          <Input
-                                            type="number"
-                                            min={0}
-                                            max={100}
-                                            step={0.01}
-                                            value={discounts[t]?.[c]?.[dopIndex] || 0}
-                                            onChange={(e) => handleDiscountChange(t, c, dopIndex, e.target.value)}
-                                            disabled={!prices[t] || prices[t][c] === 0 || !selectedContracts[c]}
-                                            className="w-20"
-                                          />
-                                        </div>
-                                      ),
-                                    )}
-                                  </div>
+                          {Array.from({ length: tenderers }).map((_, t) => {
+                            return Array.from({ length: selectedContractCount }).map((_, dopIndex) => (
+                              <TableRow key={`${t}-${dopIndex}`}>
+                                {dopIndex === 0 && (
+                                  <TableCell
+                                    className="sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium"
+                                    rowSpan={selectedContractCount}
+                                  >
+                                    {tendererNames[t] || `T${t + 1}`}
+                                  </TableCell>
+                                )}
+                                <TableCell className="font-medium text-center">
+                                  {dopIndex + 1}
                                 </TableCell>
-                              ))}
-                            </TableRow>
-                          ))}
+                                {Array.from({ length: contracts }).map((_, c) => (
+                                  <TableCell key={c} className={`p-2 ${!selectedContracts[c] ? "opacity-50" : ""}`}>
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      step={0.01}
+                                      value={discounts[t]?.[c]?.[dopIndex] || 0}
+                                      onChange={(e) => handleDiscountChange(t, c, dopIndex, e.target.value)}
+                                      disabled={!prices[t] || prices[t][c] === 0 || !selectedContracts[c]}
+                                      className="w-20"
+                                    />
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                            ));
+                          })}
                         </TableBody>
                       </Table>
                     </ScrollArea>
@@ -621,7 +932,7 @@ export default function AllianceCombinationsCalculator() {
                       <div className="flex items-center justify-between">
                         <Label htmlFor="price-range">Price Range</Label>
                         <Badge variant="outline">
-                          {formatCurrency(priceMin)} - {formatCurrency(priceMax)}
+                          {formatCurrency(priceMin, true)} - {formatCurrency(priceMax, true)}
                         </Badge>
                       </div>
                       <Slider
@@ -664,19 +975,7 @@ export default function AllianceCombinationsCalculator() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="random-threshold">Combination Threshold (Exhaustive if ≤)</Label>
-                  <Input
-                    id="random-threshold"
-                    type="number"
-                    min={1}
-                    value={threshold}
-                    onChange={(e) => setThreshold(Number.parseInt(e.target.value) || 5000)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Determines when to switch from exhaustive to branch-and-bound algorithm
-                  </p>
-                </div>
+
 
                 <div className="flex items-center space-x-2">
                   <Switch id="random-averageDOP" checked={useAverageDOP} onCheckedChange={setUseAverageDOP} />
@@ -692,13 +991,23 @@ export default function AllianceCombinationsCalculator() {
         </Tabs>
 
         {results && (
-          <div className="mt-8 space-y-6">
+          <div id="results-section" className="mt-8 space-y-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-xl font-bold">Results Summary</CardTitle>
-                <Button variant="ghost" size="sm" onClick={() => setShowLegend(!showLegend)} className="h-8 w-8 p-0">
-                  {showLegend ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center space-x-2">
+                    <Label htmlFor="abbreviated-amounts" className="text-sm">Abbreviated</Label>
+                    <Switch
+                      id="abbreviated-amounts"
+                      checked={showAbbreviatedAmounts}
+                      onCheckedChange={setShowAbbreviatedAmounts}
+                    />
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => setShowLegend(!showLegend)} className="h-8 w-8 p-0">
+                    {showLegend ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 {showLegend && (
@@ -707,7 +1016,7 @@ export default function AllianceCombinationsCalculator() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                       <div className="flex items-center">
                         <div className="w-4 h-4 bg-[#FF5E93]/20 dark:bg-[#FF5E93]/30 mr-2 rounded"></div>
-                        <span>Lowest base price for a contract</span>
+                        <span>Lowest price for a contract</span>
                       </div>
                       <div className="flex items-center">
                         <div className="w-4 h-4 bg-[#00B2CA]/20 dark:bg-[#00B2CA]/30 mr-2 rounded"></div>
@@ -715,7 +1024,7 @@ export default function AllianceCombinationsCalculator() {
                       </div>
                       <div className="flex items-center">
                         <div className="w-4 h-4 bg-gray-200 dark:bg-gray-700 mr-2 rounded"></div>
-                        <span>Discounted amount &gt; lowest base price</span>
+                        <span>Discounted amount &gt; lowest price</span>
                       </div>
                       {useAverageDOP &&
                         results.dopDifferences &&
@@ -731,17 +1040,17 @@ export default function AllianceCombinationsCalculator() {
 
                 <div className="grid gap-4 md:grid-cols-3">
                   <div className="p-4 border rounded-lg bg-white dark:bg-gray-800 shadow-sm">
-                    <div className="text-sm text-muted-foreground">Total Lowest Base Prices</div>
-                    <div className="text-2xl font-bold">{formatCurrency(results.totalLowestBase)}</div>
+                    <div className="text-sm text-muted-foreground">Total Lowest Prices</div>
+                    <div className="text-2xl font-bold">{formatCurrency(results.totalLowestBase, showAbbreviatedAmounts)}</div>
                   </div>
                   <div className="p-4 border rounded-lg bg-white dark:bg-gray-800 shadow-sm">
                     <div className="text-sm text-muted-foreground">Total Selected Discounted</div>
-                    <div className="text-2xl font-bold">{formatCurrency(results.totalSelectedDiscounted)}</div>
+                    <div className="text-2xl font-bold">{formatCurrency(results.totalSelectedDiscounted, showAbbreviatedAmounts)}</div>
                   </div>
                   <div className="p-4 border rounded-lg bg-[#00B2CA]/10 dark:bg-[#00B2CA]/20 shadow-sm">
                     <div className="text-sm text-muted-foreground dark:text-gray-400">Cost Saving</div>
                     <div className="text-2xl font-bold text-[#00B2CA] dark:text-[#00B2CA]">
-                      {formatCurrency(results.costSaving)}
+                      {formatCurrency(results.costSaving, showAbbreviatedAmounts)}
                     </div>
                   </div>
                 </div>
@@ -793,26 +1102,18 @@ export default function AllianceCombinationsCalculator() {
                                 </TableCell>
                                 {Array.from({ length: contracts }).map((_, c) => {
                                   const price = results.prices && results.prices[t] ? results.prices[t][c] || 0 : 0
-                                  const isLowest =
-                                    price > 0 &&
-                                    results.prices &&
-                                    price ===
-                                      Math.min(
-                                        ...results.prices
-                                          .map((tender) => tender && tender[c])
-                                          .filter((p) => p && p > 0),
-                                      )
+                                  const isLowest = price > 0 && price === lowestBasePrices[c]
 
                                   return (
                                     <TableCell
                                       key={c}
                                       className={`${isLowest ? "bg-[#FF5E93]/20 dark:bg-[#FF5E93]/30" : ""} ${!selectedContracts[c] ? "opacity-50" : ""}`}
                                     >
-                                      {formatCurrency(price)}
+                                      {formatCurrency(price, showAbbreviatedAmounts)}
                                     </TableCell>
                                   )
                                 })}
-                                <TableCell className="font-bold">{formatCurrency(tenderTotal)}</TableCell>
+                                <TableCell className="font-bold">{formatCurrency(tenderTotal, showAbbreviatedAmounts)}</TableCell>
                               </TableRow>
                             )
                           })}
@@ -833,6 +1134,7 @@ export default function AllianceCombinationsCalculator() {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="sticky left-0 bg-white dark:bg-gray-800 z-10">Tenderer</TableHead>
+                        <TableHead className="w-16 text-center">DoP</TableHead>
                         {Array.from({ length: contracts }).map((_, i) => (
                           <TableHead key={i} className={!selectedContracts[i] ? "opacity-50" : ""}>
                             C{i + 1}
@@ -841,69 +1143,66 @@ export default function AllianceCombinationsCalculator() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {Array.from({ length: tenderers }).map((_, t) => (
-                        <TableRow key={t}>
-                          <TableCell className="sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium">
-                            {tendererNames[t] || `T${t + 1}`}
-                          </TableCell>
-                          {Array.from({ length: contracts }).map((_, c) => {
-                            const base = results.prices && results.prices[t] ? results.prices[t][c] || 0 : 0;
-                            const lowestBase = results.prices
-                              ? Math.min(
-                                  ...results.prices.map((tender) => tender && tender[c]).filter((p) => p && p > 0),
-                                )
-                              : 0;
-                            const dop =
-                              results.bestCombo &&
-                              results.bestCombo.assignment &&
-                              results.bestCombo.assignment[c] === t &&
-                              results.bestCombo.tendererCounts
-                                ? results.bestCombo.tendererCounts[t] - 1
-                                : -1;
+                      {Array.from({ length: tenderers }).map((_, t) => {
+                        return Array.from({ length: selectedContractCount }).map((_, dopIndex) => (
+                          <TableRow key={`${t}-${dopIndex}`}>
+                            {dopIndex === 0 && (
+                              <TableCell
+                                className="sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium"
+                                rowSpan={selectedContractCount}
+                              >
+                                {tendererNames[t] || `T${t + 1}`}
+                              </TableCell>
+                            )}
+                            <TableCell className="font-medium text-center">
+                              {dopIndex + 1}
+                            </TableCell>
+                            {Array.from({ length: contracts }).map((_, c) => {
+                              const base = results.prices && results.prices[t] ? results.prices[t][c] || 0 : 0;
+                              const dop =
+                                results.bestCombo &&
+                                results.bestCombo.assignment &&
+                                results.bestCombo.assignment[c] === t &&
+                                results.bestCombo.tendererCounts
+                                  ? results.bestCombo.tendererCounts[t] - 1
+                                  : -1;
 
-                            if (base === 0 || !selectedContracts[c]) {
+                              if (base === 0 || !selectedContracts[c]) {
+                                return (
+                                  <TableCell key={c} className={`text-center ${!selectedContracts[c] ? "opacity-50" : ""}`}>
+                                    -
+                                  </TableCell>
+                                );
+                              }
+
+                              const discountFraction = Number(
+                                ((results.discounts[t][c][dopIndex] || 0) / 100).toFixed(4),
+                              );
+                              const amount = Number((base * (1 - discountFraction)).toFixed(2));
+                              const isSelected = dopIndex === dop;
+                              const exceedsLowest = amount > lowestBasePrices[c];
+
                               return (
-                                <TableCell key={c} className={!selectedContracts[c] ? "opacity-50" : ""}>
-                                  -
+                                <TableCell
+                                  key={c}
+                                  className={`text-center p-2 ${!selectedContracts[c] ? "opacity-50" : ""}`}
+                                >
+                                  <div
+                                    className={`
+                                      rounded px-2 py-1 text-xs leading-tight
+                                      ${isSelected ? "font-bold bg-[#00B2CA]/20 dark:bg-[#00B2CA]/30" : ""}
+                                      ${exceedsLowest ? "bg-gray-200 dark:bg-gray-700" : ""}
+                                    `}
+                                  >
+                                    <div className={`font-medium ${!showAbbreviatedAmounts ? 'text-xs' : ''}`}>{formatCurrency(amount, showAbbreviatedAmounts)}</div>
+                                    <div className="text-muted-foreground">({(results.discounts[t][c][dopIndex] || 0).toFixed(2)}%)</div>
+                                  </div>
                                 </TableCell>
                               );
-                            }
-
-                            return (
-                              <TableCell key={c} className="p-1">
-                                <div className="space-y-1 text-xs break-words">
-                                  {Array.from({ length: selectedContracts.filter(Boolean).length }).map((_, i) => {
-                                    if (!results.discounts || !results.discounts[t] || !results.discounts[t][c]) {
-                                      return null;
-                                    }
-
-                                    const discountFraction = Number(
-                                      ((results.discounts[t][c][i] || 0) / 100).toFixed(4),
-                                    );
-                                    const amount = Number((base * (1 - discountFraction)).toFixed(2));
-                                    const isSelected = i === dop;
-                                    const exceedsLowest = amount > lowestBase;
-
-                                    return (
-                                      <div
-                                        key={i}
-                                        className={`
-                                          rounded px-0 py-0.5 break-words
-                                          ${isSelected ? "font-bold bg-[#00B2CA]/20 dark:bg-[#00B2CA]/30" : ""}
-                                          ${exceedsLowest ? "bg-gray-200 dark:bg-gray-700" : ""}
-                                        `}
-                                      >
-                                        DoP {i + 1}: {formatCurrency(amount)} (
-                                        <span>{(results.discounts[t][c][i] || 0).toFixed(2)}%</span>)
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </TableCell>
-                            );
-                          })}
-                        </TableRow>
-                      ))}
+                            })}
+                          </TableRow>
+                        ));
+                      })}
                     </TableBody>
                   </Table>
                 </ScrollArea>
@@ -962,11 +1261,11 @@ export default function AllianceCombinationsCalculator() {
                                       ${!selectedContracts[c] ? "opacity-50" : ""}
                                     `}
                                   >
-                                    {tendererCosts[c] > 0 ? formatCurrency(tendererCosts[c]) : "-"}
+                                    {tendererCosts[c] > 0 ? formatCurrency(tendererCosts[c], showAbbreviatedAmounts) : "-"}
                                   </TableCell>
                                 ))}
                                 <TableCell className="font-bold">
-                                  {tendererTotal > 0 ? formatCurrency(tendererTotal) : "-"}
+                                  {tendererTotal > 0 ? formatCurrency(tendererTotal, showAbbreviatedAmounts) : "-"}
                                 </TableCell>
                               </TableRow>
                             )
@@ -981,11 +1280,11 @@ export default function AllianceCombinationsCalculator() {
                                 : 0
                               return (
                                 <TableCell key={c} className={`font-bold ${!selectedContracts[c] ? "opacity-50" : ""}`}>
-                                  {formatCurrency(columnTotal)}
+                                  {formatCurrency(columnTotal, showAbbreviatedAmounts)}
                                 </TableCell>
                               )
                             })}
-                            <TableCell className="font-bold">{formatCurrency(results.bestCombo.total)}</TableCell>
+                            <TableCell className="font-bold">{formatCurrency(results.bestCombo.total, showAbbreviatedAmounts)}</TableCell>
                           </TableRow>
                         </TableBody>
                       </Table>
@@ -1021,30 +1320,20 @@ export default function AllianceCombinationsCalculator() {
 
                             const isBest = index === 0
 
-                            const lowestBaseAssignment = Array(contracts).fill(-1)
-                            const lowestBaseCosts = Array(contracts).fill(0)
-
-                            for (let c = 0; c < contracts; c++) {
-                              if (!results.prices) continue
-
+                            const isLowestBase = combo.assignment.every((t, c) => {
+                              if (!results.prices) return false
                               const validPrices = results.prices
-                                .map((t, i) => ({
-                                  price: t && t[c],
+                                .map((tender, i) => ({
+                                  price: tender && tender[c],
                                   tenderer: i,
                                 }))
                                 .filter((p) => p.price && p.price > 0)
 
-                              if (validPrices.length > 0) {
-                                const minPrice = Math.min(...validPrices.map((p) => p.price))
-                                const minTenderer = validPrices.find((p) => p.price === minPrice)?.tenderer
-                                if (minTenderer !== undefined) {
-                                  lowestBaseAssignment[c] = minTenderer
-                                  lowestBaseCosts[c] = minPrice
-                                }
-                              }
-                            }
-
-                            const isLowestBase = combo.assignment.every((t, c) => t === lowestBaseAssignment[c])
+                              if (validPrices.length === 0) return false
+                              const minPrice = Math.min(...validPrices.map((p) => p.price))
+                              const minTenderer = validPrices.find((p) => p.price === minPrice)?.tenderer
+                              return t === minTenderer
+                            })
 
                             return (
                               <TableRow
@@ -1064,7 +1353,7 @@ export default function AllianceCombinationsCalculator() {
                                       {tenderer >= 0
                                         ? <div><TooltipProvider>
                                         <Tooltip>
-                                          <TooltipTrigger>{formatCurrency(cost)}</TooltipTrigger>
+                                          <TooltipTrigger>{formatCurrency(cost, showAbbreviatedAmounts)}</TooltipTrigger>
                                           <TooltipContent>
                                             <p>{tendererNames[tenderer]}</p>
                                           </TooltipContent>
@@ -1074,7 +1363,7 @@ export default function AllianceCombinationsCalculator() {
                                     </TableCell>
                                   )
                                 })}
-                                <TableCell className="font-bold">{formatCurrency(combo.total)}</TableCell>
+                                <TableCell className="font-bold">{formatCurrency(combo.total, showAbbreviatedAmounts)}</TableCell>
                               </TableRow>
                             )
                           })}
@@ -1101,7 +1390,27 @@ export default function AllianceCombinationsCalculator() {
           </div>
         )}
       </main>
-    </div>
-  )
-}
 
+      <div className="fixed right-0 top-0 h-screen overflow-hidden">
+        <HistorySidebar
+          ref={historySidebarRef}
+          onLoadHistory={(item) => {
+            // Load the history item data - set dimensions first, then data to prevent overwriting
+            setContracts(item.contracts)
+            setTenderers(item.tenderers)
+            // Use setTimeout to ensure state updates are processed before setting data
+            setTimeout(() => {
+              setPrices(item.prices.map(row => [...row]))
+              setDiscounts(item.discounts.map(row => row.map(col => [...col])))
+              setTendererNames([...item.tendererNames])
+              setSelectedContracts([...item.selectedContracts])
+              // Set the loading flag to trigger automatic calculation
+              setIsLoadingFromHistory(true)
+            }, 100)
+          }}
+        />
+      </div>
+    </div>
+    </>
+  )
+})

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 
 // Define types for results and combinations
 interface Combination {
@@ -24,7 +24,6 @@ interface Results {
 export const useAllianceCombinations = () => {
   const [contracts, setContracts] = useState(2);
   const [tenderers, setTenderers] = useState(2);
-  const [threshold, setThreshold] = useState(5000);
   const [useAverageDOP, setUseAverageDOP] = useState(false);
   const [prices, setPrices] = useState<number[][]>([]);
   const [discounts, setDiscounts] = useState<number[][][]>([]);
@@ -35,6 +34,7 @@ export const useAllianceCombinations = () => {
   const [priceMax, setPriceMax] = useState(500000);
   const [discountMax, setDiscountMax] = useState(20);
   const [displayedCombinations, setDisplayedCombinations] = useState(50);
+  const [isLoadingFromHistory, setIsLoadingFromHistory] = useState(false);
 
   const initializePricesAndDiscounts = () => {
     const newPrices = Array(tenderers)
@@ -56,22 +56,40 @@ export const useAllianceCombinations = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenderers, contracts]);
 
-  const handlePriceChange = (t: number, c: number, value: string) => {
-    const newPrices = [...prices];
-    newPrices[t][c] = Number(Number.parseFloat(value).toFixed(2)) || 0;
-    setPrices(newPrices);
-  };
+  const handlePriceChange = useCallback((t: number, c: number, value: string) => {
+    const numValue = Number(Number.parseFloat(value).toFixed(2)) || 0;
+    setPrices(prevPrices => {
+      const newPrices = prevPrices.map((row, rowIndex) =>
+        rowIndex === t
+          ? row.map((cell, colIndex) => (colIndex === c ? numValue : cell))
+          : row
+      );
+      return newPrices;
+    });
+  }, []);
 
-  const handleDiscountChange = (
+  const handleDiscountChange = useCallback((
     t: number,
     c: number,
     dop: number,
     value: string
   ) => {
-    const newDiscounts = [...discounts];
-    newDiscounts[t][c][dop] = Number(Number.parseFloat(value).toFixed(2)) || 0;
-    setDiscounts(newDiscounts);
-  };
+    const numValue = Number(Number.parseFloat(value).toFixed(2)) || 0;
+    setDiscounts(prevDiscounts => {
+      const newDiscounts = prevDiscounts.map((tenderDiscounts, tenderIndex) =>
+        tenderIndex === t
+          ? tenderDiscounts.map((contractDops, contractIndex) =>
+              contractIndex === c
+                ? contractDops.map((dopValue, dopIndex) =>
+                    dopIndex === dop ? numValue : dopValue
+                  )
+                : contractDops
+            )
+          : tenderDiscounts
+      );
+      return newDiscounts;
+    });
+  }, []);
 
   const generateRandomData = (
     contracts: number,
@@ -108,7 +126,6 @@ export const useAllianceCombinations = () => {
         discounts,
         contracts,
         tenderers,
-        threshold,
         useAverageDOP
       );
       setResults(results);
@@ -132,7 +149,6 @@ export const useAllianceCombinations = () => {
         newDiscounts,
         contracts,
         tenderers,
-        threshold,
         useAverageDOP
       );
       setPrices(newPrices);
@@ -149,11 +165,30 @@ export const useAllianceCombinations = () => {
     discounts: number[][][],
     contracts: number,
     tenderers: number,
-    threshold = 5000,
     useAverageDOP = false
   ): Results => {
     const n = contracts;
     const m = tenderers;
+
+    // Safeguard: ensure prices and discounts have correct structure
+    let validPrices = prices;
+    let validDiscounts = discounts;
+
+    if (!prices || !Array.isArray(prices) || prices.length !== m ||
+        !prices.every(row => Array.isArray(row) && row.length === n)) {
+      console.warn("Invalid prices structure detected, repairing...");
+      validPrices = Array(m).fill(0).map(() => Array(n).fill(0));
+    }
+    if (!discounts || !Array.isArray(discounts) || discounts.length !== m ||
+        !discounts.every(row => Array.isArray(row) && row.length === n &&
+          row.every(col => Array.isArray(col) && col.length === n))) {
+      console.warn("Invalid discounts structure detected, repairing...");
+      validDiscounts = Array(m).fill(0).map(() => Array(n).fill(0).map(() => Array(n).fill(0)));
+    }
+
+    // Use the validated/repair structures
+    prices = validPrices;
+    discounts = validDiscounts;
 
     const processedDiscounts = discounts.map((tenderDiscounts) =>
       tenderDiscounts.map((contractDops) => contractDops.slice())
@@ -356,11 +391,7 @@ export const useAllianceCombinations = () => {
       }
     }
 
-    if (adjustedTotalPossibleCombos <= threshold) {
-      exhaustiveSearch();
-    } else {
-      branchAndBound();
-    }
+    branchAndBound();
 
     combinations.sort((a, b) => a.total - b.total);
 
@@ -385,18 +416,27 @@ export const useAllianceCombinations = () => {
     };
   };
 
-  const formatCurrency = (value: number | undefined | null) => {
+  const formatCurrency = (value: number | undefined | null, abbreviated: boolean = true) => {
     if (value === undefined || value === null) {
       return "$0.00";
     }
 
     try {
-      return value.toLocaleString("zh-HK", {
-        style: "currency",
-        currency: "HKD",
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      });
+      if (abbreviated) {
+        // For very large amounts, use abbreviated notation
+        if (value >= 1000000000) { // Billions
+          return `$${(value / 1000000000).toFixed(2)}B`;
+        } else if (value >= 1000000) { // Millions
+          return `$${(value / 1000000).toFixed(2)}M`;
+        } else if (value >= 1000) { // Thousands
+          return `$${(value / 1000).toFixed(2)}K`;
+        } else {
+          return `$${value.toLocaleString()}`;
+        }
+      } else {
+        // Full currency format with comma separation
+        return `$${value.toLocaleString()}`;
+      }
     } catch (error) {
       console.error("Error formatting currency:", error, "Value:", value);
       return "$0.00";
@@ -407,11 +447,24 @@ export const useAllianceCombinations = () => {
     if (
       !prices.length ||
       prices.length !== tenderers ||
-      (prices.length > 0 && prices[0].length !== contracts)
+      (prices.length > 0 && prices[0].length !== contracts) ||
+      !prices.every(row => Array.isArray(row)) ||
+      !discounts.length ||
+      discounts.length !== tenderers ||
+      (discounts.length > 0 && (!discounts[0].length || discounts[0].length !== contracts)) ||
+      !discounts.every(row => Array.isArray(row) && row.every(col => Array.isArray(col)))
     ) {
       initializePricesAndDiscounts();
     }
-  }, [contracts, tenderers, prices, initializePricesAndDiscounts]);
+  }, [contracts, tenderers, prices, discounts, initializePricesAndDiscounts]);
+
+  // Auto-calculate when loading from history
+  useEffect(() => {
+    if (isLoadingFromHistory && prices.length > 0 && discounts.length > 0) {
+      calculateResults();
+      setIsLoadingFromHistory(false);
+    }
+  }, [isLoadingFromHistory, prices, discounts]);
 
   const safeArrayReduce = (arr: number[] | undefined, initialValue: number) => {
     if (!arr || !Array.isArray(arr)) return initialValue;
@@ -434,12 +487,12 @@ export const useAllianceCombinations = () => {
     setContracts,
     tenderers,
     setTenderers,
-    threshold,
-    setThreshold,
     useAverageDOP,
     setUseAverageDOP,
     prices,
+    setPrices,
     discounts,
+    setDiscounts,
     results,
     showDiscounts,
     setShowDiscounts,
@@ -459,5 +512,7 @@ export const useAllianceCombinations = () => {
     formatCurrency,
     safeArrayReduce,
     loadMoreCombinations,
+    isLoadingFromHistory,
+    setIsLoadingFromHistory,
   };
 };
