@@ -40,7 +40,8 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 ### Build the image
 
 ```bash
-docker build -t alliance-next .
+docker buildx build --platform linux/arm64,linux/amd64 \
+  -t username/repository-name:tag --push .
 ```
 
 ### Run with Docker
