@@ -31,8 +31,7 @@ import {
   Download,
   History,
 } from "lucide-react";
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
+
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useAllianceCombinations } from "../hooks/useAllianceCombinations";
 import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
@@ -266,152 +265,152 @@ export default memo(function AllianceCombinationsCalculator() {
     }
   };
 
-  const exportToPDF = async () => {
-    if (!results) {
-      alert("No results to export. Please calculate results first.");
-      return;
-    }
+  // const exportToPDF = async () => {
+  //   if (!results) {
+  //     alert("No results to export. Please calculate results first.");
+  //     return;
+  //   }
 
-    try {
-      // Get the results section element
-      const resultsElement = document.getElementById("results-section");
-      if (!resultsElement) {
-        console.error("Results section not found");
-        alert("Results section not found. Please try again.");
-        return;
-      }
+  //   try {
+  //     // Get the results section element
+  //     const resultsElement = document.getElementById("results-section");
+  //     if (!resultsElement) {
+  //       console.error("Results section not found");
+  //       alert("Results section not found. Please try again.");
+  //       return;
+  //     }
 
-      console.log("Found results element:", resultsElement);
-      console.log("Element dimensions:", {
-        scrollWidth: resultsElement.scrollWidth,
-        scrollHeight: resultsElement.scrollHeight,
-        clientWidth: resultsElement.clientWidth,
-        clientHeight: resultsElement.clientHeight,
-      });
+  //     console.log("Found results element:", resultsElement);
+  //     console.log("Element dimensions:", {
+  //       scrollWidth: resultsElement.scrollWidth,
+  //       scrollHeight: resultsElement.scrollHeight,
+  //       clientWidth: resultsElement.clientWidth,
+  //       clientHeight: resultsElement.clientHeight,
+  //     });
 
-      // Configure html2canvas options for better quality
-      const canvas = await html2canvas(resultsElement, {
-        scale: 1, // Start with scale 1 to avoid memory issues
-        useCORS: false,
-        allowTaint: true, // Allow tainting for better compatibility with modern CSS
-        backgroundColor: "#ffffff",
-        logging: false, // Disable logging to reduce noise
-        width: resultsElement.clientWidth,
-        height: resultsElement.clientHeight,
-        scrollX: 0,
-        scrollY: 0,
-        windowWidth: resultsElement.clientWidth,
-        windowHeight: resultsElement.clientHeight,
-        ignoreElements: (element) => {
-          // Ignore elements that might cause issues
-          return (
-            element.tagName === "BUTTON" &&
-            (element.textContent?.includes("Load More") ?? false)
-          );
-        },
-      });
+  //     // Configure html2canvas options for better quality
+  //     const canvas = await html2canvas(resultsElement, {
+  //       scale: 1, // Start with scale 1 to avoid memory issues
+  //       useCORS: false,
+  //       allowTaint: true, // Allow tainting for better compatibility with modern CSS
+  //       backgroundColor: "#ffffff",
+  //       logging: false, // Disable logging to reduce noise
+  //       width: resultsElement.clientWidth,
+  //       height: resultsElement.clientHeight,
+  //       scrollX: 0,
+  //       scrollY: 0,
+  //       windowWidth: resultsElement.clientWidth,
+  //       windowHeight: resultsElement.clientHeight,
+  //       ignoreElements: (element) => {
+  //         // Ignore elements that might cause issues
+  //         return (
+  //           element.tagName === "BUTTON" &&
+  //           (element.textContent?.includes("Load More") ?? false)
+  //         );
+  //       },
+  //     });
 
-      console.log("Canvas created:", {
-        width: canvas.width,
-        height: canvas.height,
-      });
+  //     console.log("Canvas created:", {
+  //       width: canvas.width,
+  //       height: canvas.height,
+  //     });
 
-      // Create PDF with landscape orientation
-      const doc = new jsPDF({
-        orientation: "landscape",
-        unit: "mm",
-        format: "a4",
-      });
+  //     // Create PDF with landscape orientation
+  //     const doc = new jsPDF({
+  //       orientation: "landscape",
+  //       unit: "mm",
+  //       format: "a4",
+  //     });
 
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 5;
+  //     const pageWidth = doc.internal.pageSize.getWidth();
+  //     const pageHeight = doc.internal.pageSize.getHeight();
+  //     const margin = 5;
 
-      // Calculate image dimensions to fit the page
-      const imgWidth = pageWidth - 2 * margin;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+  //     // Calculate image dimensions to fit the page
+  //     const imgWidth = pageWidth - 2 * margin;
+  //     const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-      console.log("PDF dimensions:", {
-        pageWidth,
-        pageHeight,
-        imgWidth,
-        imgHeight,
-        totalPages: Math.ceil(imgHeight / (pageHeight - 2 * margin)),
-      });
+  //     console.log("PDF dimensions:", {
+  //       pageWidth,
+  //       pageHeight,
+  //       imgWidth,
+  //       imgHeight,
+  //       totalPages: Math.ceil(imgHeight / (pageHeight - 2 * margin)),
+  //     });
 
-      // If content is taller than one page, split it
-      if (imgHeight > pageHeight - 2 * margin) {
-        // Calculate how many pages we need
-        const totalPages = Math.ceil(imgHeight / (pageHeight - 2 * margin));
+  //     // If content is taller than one page, split it
+  //     if (imgHeight > pageHeight - 2 * margin) {
+  //       // Calculate how many pages we need
+  //       const totalPages = Math.ceil(imgHeight / (pageHeight - 2 * margin));
 
-        for (let page = 0; page < totalPages; page++) {
-          if (page > 0) {
-            doc.addPage();
-          }
+  //       for (let page = 0; page < totalPages; page++) {
+  //         if (page > 0) {
+  //           doc.addPage();
+  //         }
 
-          // Calculate the portion of the image for this page
-          const sourceY =
-            (page * (pageHeight - 2 * margin) * canvas.width) / imgWidth;
-          const sourceHeight = Math.min(
-            ((pageHeight - 2 * margin) * canvas.width) / imgWidth,
-            canvas.height - sourceY
-          );
+  //         // Calculate the portion of the image for this page
+  //         const sourceY =
+  //           (page * (pageHeight - 2 * margin) * canvas.width) / imgWidth;
+  //         const sourceHeight = Math.min(
+  //           ((pageHeight - 2 * margin) * canvas.width) / imgWidth,
+  //           canvas.height - sourceY
+  //         );
 
-          // Create a temporary canvas for this page's portion
-          const pageCanvas = document.createElement("canvas");
-          const pageCtx = pageCanvas.getContext("2d");
-          if (!pageCtx) {
-            console.error("Could not get canvas context");
-            continue;
-          }
+  //         // Create a temporary canvas for this page's portion
+  //         const pageCanvas = document.createElement("canvas");
+  //         const pageCtx = pageCanvas.getContext("2d");
+  //         if (!pageCtx) {
+  //           console.error("Could not get canvas context");
+  //           continue;
+  //         }
 
-          pageCanvas.width = canvas.width;
-          pageCanvas.height = sourceHeight;
+  //         pageCanvas.width = canvas.width;
+  //         pageCanvas.height = sourceHeight;
 
-          // Draw the portion of the original canvas
-          pageCtx.drawImage(
-            canvas,
-            0,
-            sourceY,
-            canvas.width,
-            sourceHeight,
-            0,
-            0,
-            canvas.width,
-            sourceHeight
-          );
+  //         // Draw the portion of the original canvas
+  //         pageCtx.drawImage(
+  //           canvas,
+  //           0,
+  //           sourceY,
+  //           canvas.width,
+  //           sourceHeight,
+  //           0,
+  //           0,
+  //           canvas.width,
+  //           sourceHeight
+  //         );
 
-          const pageImgData = pageCanvas.toDataURL("image/png");
+  //         const pageImgData = pageCanvas.toDataURL("image/png");
 
-          // Add image to PDF
-          doc.addImage(
-            pageImgData,
-            "PNG",
-            margin,
-            margin,
-            imgWidth,
-            Math.min(
-              (sourceHeight * imgWidth) / canvas.width,
-              pageHeight - 2 * margin
-            )
-          );
-        }
-      } else {
-        // Single page - add the entire image
-        const imgData = canvas.toDataURL("image/png");
-        doc.addImage(imgData, "PNG", margin, margin, imgWidth, imgHeight);
-      }
+  //         // Add image to PDF
+  //         doc.addImage(
+  //           pageImgData,
+  //           "PNG",
+  //           margin,
+  //           margin,
+  //           imgWidth,
+  //           Math.min(
+  //             (sourceHeight * imgWidth) / canvas.width,
+  //             pageHeight - 2 * margin
+  //           )
+  //         );
+  //       }
+  //     } else {
+  //       // Single page - add the entire image
+  //       const imgData = canvas.toDataURL("image/png");
+  //       doc.addImage(imgData, "PNG", margin, margin, imgWidth, imgHeight);
+  //     }
 
-      // Save the PDF
-      doc.save("alliance_combinations_results.pdf");
-      console.log("PDF saved successfully");
-    } catch (error) {
-      console.error("Error generating PDF:", error);
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      alert(`Error generating PDF: ${errorMessage}. Please try again.`);
-    }
-  };
+  //     // Save the PDF
+  //     doc.save("alliance_combinations_results.pdf");
+  //     console.log("PDF saved successfully");
+  //   } catch (error) {
+  //     console.error("Error generating PDF:", error);
+  //     const errorMessage =
+  //       error instanceof Error ? error.message : "Unknown error";
+  //     alert(`Error generating PDF: ${errorMessage}. Please try again.`);
+  //   }
+  // };
 
   return (
     <>
