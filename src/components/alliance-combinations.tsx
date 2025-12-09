@@ -86,7 +86,7 @@ export default memo(function AllianceCombinationsCalculator() {
   const [tendererNames, setTendererNames] = useState<string[]>([]);
   const [selectedContracts, setSelectedContracts] = useState<boolean[]>([]);
   const [shouldSaveToHistory, setShouldSaveToHistory] = useState(false);
-  const [showAbbreviatedAmounts, setShowAbbreviatedAmounts] = useState(true);
+  const [showAbbreviatedAmounts, setShowAbbreviatedAmounts] = useState(false);
   const historySidebarRef = useRef<{ refreshHistory: () => void }>(null);
 
   // Initialize tenderer names and selected contracts when tenderers or contracts change
@@ -741,7 +741,7 @@ export default memo(function AllianceCombinationsCalculator() {
                     <Slider
                       id="tenderers"
                       min={1}
-                      max={20}
+                      max={50}
                       step={1}
                       value={[tenderers]}
                       onValueChange={(value) => setTenderers(value[0])}
@@ -749,7 +749,7 @@ export default memo(function AllianceCombinationsCalculator() {
                     />
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>1</span>
-                      <span>20</span>
+                      <span>50</span>
                     </div>
                   </div>
 
@@ -881,13 +881,13 @@ export default memo(function AllianceCombinationsCalculator() {
                                   {formatCurrency(
                                     prices[t]
                                       ? prices[t]
-                                          .filter(
-                                            (_, i) => selectedContracts[i]
-                                          )
-                                          .reduce(
-                                            (sum, price) => sum + (price || 0),
-                                            0
-                                          )
+                                        .filter(
+                                          (_, i) => selectedContracts[i]
+                                        )
+                                        .reduce(
+                                          (sum, price) => sum + (price || 0),
+                                          0
+                                        )
                                       : 0,
                                     showAbbreviatedAmounts
                                   )}
@@ -960,11 +960,10 @@ export default memo(function AllianceCombinationsCalculator() {
                                     (_, c) => (
                                       <TableCell
                                         key={c}
-                                        className={`p-2 ${
-                                          !selectedContracts[c]
-                                            ? "opacity-50"
-                                            : ""
-                                        }`}
+                                        className={`p-2 ${!selectedContracts[c]
+                                          ? "opacity-50"
+                                          : ""
+                                          }`}
                                       >
                                         <Input
                                           type="number"
@@ -1058,7 +1057,7 @@ export default memo(function AllianceCombinationsCalculator() {
                         <Slider
                           id="random-tenderers"
                           min={1}
-                          max={20}
+                          max={50}
                           step={1}
                           value={[tenderers]}
                           onValueChange={(value) => setTenderers(value[0])}
@@ -1066,7 +1065,7 @@ export default memo(function AllianceCombinationsCalculator() {
                         />
                         <div className="flex justify-between text-xs text-muted-foreground">
                           <span>1</span>
-                          <span>20</span>
+                          <span>50</span>
                         </div>
                       </div>
                     </div>
@@ -1285,11 +1284,11 @@ export default memo(function AllianceCombinationsCalculator() {
                               const tenderTotal =
                                 results.prices && results.prices[t]
                                   ? results.prices[t]
-                                      .filter((_, i) => selectedContracts[i])
-                                      .reduce(
-                                        (sum, price) => sum + (price || 0),
-                                        0
-                                      )
+                                    .filter((_, i) => selectedContracts[i])
+                                    .reduce(
+                                      (sum, price) => sum + (price || 0),
+                                      0
+                                    )
                                   : 0;
 
                               return (
@@ -1310,15 +1309,13 @@ export default memo(function AllianceCombinationsCalculator() {
                                       return (
                                         <TableCell
                                           key={c}
-                                          className={`${
-                                            isLowest
-                                              ? "bg-[#FF5E93]/20 dark:bg-[#FF5E93]/30"
-                                              : ""
-                                          } ${
-                                            !selectedContracts[c]
+                                          className={`${isLowest
+                                            ? "bg-[#FF5E93]/20 dark:bg-[#FF5E93]/30"
+                                            : ""
+                                            } ${!selectedContracts[c]
                                               ? "opacity-50"
                                               : ""
-                                          }`}
+                                            }`}
                                         >
                                           {formatCurrency(
                                             price,
@@ -1397,22 +1394,21 @@ export default memo(function AllianceCombinationsCalculator() {
                                         : 0;
                                     const dop =
                                       results.bestCombo &&
-                                      results.bestCombo.assignment &&
-                                      results.bestCombo.assignment[c] === t &&
-                                      results.bestCombo.tendererCounts
+                                        results.bestCombo.assignment &&
+                                        results.bestCombo.assignment[c] === t &&
+                                        results.bestCombo.tendererCounts
                                         ? results.bestCombo.tendererCounts[t] -
-                                          1
+                                        1
                                         : -1;
 
                                     if (base === 0 || !selectedContracts[c]) {
                                       return (
                                         <TableCell
                                           key={c}
-                                          className={`text-center ${
-                                            !selectedContracts[c]
-                                              ? "opacity-50"
-                                              : ""
-                                          }`}
+                                          className={`text-center ${!selectedContracts[c]
+                                            ? "opacity-50"
+                                            : ""
+                                            }`}
                                         >
                                           -
                                         </TableCell>
@@ -1435,33 +1431,29 @@ export default memo(function AllianceCombinationsCalculator() {
                                     return (
                                       <TableCell
                                         key={c}
-                                        className={`text-center p-2 ${
-                                          !selectedContracts[c]
-                                            ? "opacity-50"
-                                            : ""
-                                        }`}
+                                        className={`text-center p-2 ${!selectedContracts[c]
+                                          ? "opacity-50"
+                                          : ""
+                                          }`}
                                       >
                                         <div
                                           className={`
                                       rounded px-2 py-1 text-xs leading-tight
-                                      ${
-                                        isSelected
-                                          ? "font-bold bg-[#00B2CA]/20 dark:bg-[#00B2CA]/30"
-                                          : ""
-                                      }
-                                      ${
-                                        exceedsLowest
-                                          ? "bg-gray-200 dark:bg-gray-700"
-                                          : ""
-                                      }
+                                      ${isSelected
+                                              ? "font-bold bg-[#00B2CA]/20 dark:bg-[#00B2CA]/30"
+                                              : ""
+                                            }
+                                      ${exceedsLowest
+                                              ? "bg-gray-200 dark:bg-gray-700"
+                                              : ""
+                                            }
                                     `}
                                         >
                                           <div
-                                            className={`font-medium ${
-                                              !showAbbreviatedAmounts
-                                                ? "text-xs"
-                                                : ""
-                                            }`}
+                                            className={`font-medium ${!showAbbreviatedAmounts
+                                              ? "text-xs"
+                                              : ""
+                                              }`}
                                           >
                                             {formatCurrency(
                                               amount,
@@ -1472,7 +1464,7 @@ export default memo(function AllianceCombinationsCalculator() {
                                             (
                                             {(
                                               results.discounts[t][c][
-                                                dopIndex
+                                              dopIndex
                                               ] || 0
                                             ).toFixed(2)}
                                             %)
@@ -1551,24 +1543,22 @@ export default memo(function AllianceCombinationsCalculator() {
                                       <TableCell
                                         key={c}
                                         className={`
-                                      ${
-                                        results.bestCombo?.assignment &&
-                                        results.bestCombo?.assignment[c] === t
-                                          ? "bg-[#00B2CA]/20 dark:bg-[#00B2CA]/30"
-                                          : ""
-                                      }
-                                      ${
-                                        !selectedContracts[c]
-                                          ? "opacity-50"
-                                          : ""
-                                      }
+                                      ${results.bestCombo?.assignment &&
+                                            results.bestCombo?.assignment[c] === t
+                                            ? "bg-[#00B2CA]/20 dark:bg-[#00B2CA]/30"
+                                            : ""
+                                          }
+                                      ${!selectedContracts[c]
+                                            ? "opacity-50"
+                                            : ""
+                                          }
                                     `}
                                       >
                                         {tendererCosts[c] > 0
                                           ? formatCurrency(
-                                              tendererCosts[c],
-                                              showAbbreviatedAmounts
-                                            )
+                                            tendererCosts[c],
+                                            showAbbreviatedAmounts
+                                          )
                                           : "-"}
                                       </TableCell>
                                     )
@@ -1576,9 +1566,9 @@ export default memo(function AllianceCombinationsCalculator() {
                                   <TableCell className="font-bold">
                                     {tendererTotal > 0
                                       ? formatCurrency(
-                                          tendererTotal,
-                                          showAbbreviatedAmounts
-                                        )
+                                        tendererTotal,
+                                        showAbbreviatedAmounts
+                                      )
                                       : "-"}
                                   </TableCell>
                                 </TableRow>
@@ -1596,9 +1586,8 @@ export default memo(function AllianceCombinationsCalculator() {
                                 return (
                                   <TableCell
                                     key={c}
-                                    className={`font-bold ${
-                                      !selectedContracts[c] ? "opacity-50" : ""
-                                    }`}
+                                    className={`font-bold ${!selectedContracts[c] ? "opacity-50" : ""
+                                      }`}
                                   >
                                     {formatCurrency(
                                       columnTotal,
@@ -1682,16 +1671,14 @@ export default memo(function AllianceCombinationsCalculator() {
                                     key={index}
                                     className={`
                                   px-0
-                                  ${
-                                    isBest
-                                      ? "bg-[#00B2CA]/20 dark:bg-[#00B2CA]/30"
-                                      : ""
-                                  }
-                                  ${
-                                    isLowestBase
-                                      ? "bg-[#FF5E93]/20 dark:bg-[#FF5E93]/30"
-                                      : ""
-                                  }
+                                  ${isBest
+                                        ? "bg-[#00B2CA]/20 dark:bg-[#00B2CA]/30"
+                                        : ""
+                                      }
+                                  ${isLowestBase
+                                        ? "bg-[#FF5E93]/20 dark:bg-[#FF5E93]/30"
+                                        : ""
+                                      }
                                 `}
                                   >
                                     <TableCell className="font-medium">
@@ -1728,7 +1715,7 @@ export default memo(function AllianceCombinationsCalculator() {
                                                       <p>
                                                         {
                                                           tendererNames[
-                                                            tenderer
+                                                          tenderer
                                                           ]
                                                         }
                                                       </p>

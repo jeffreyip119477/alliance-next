@@ -103,7 +103,7 @@ const HistorySidebar = forwardRef<
     }
   };
 
-  const formatCurrency = (value: number, abbreviate: boolean = true) => {
+  const formatCurrency = (value: number, abbreviate: boolean = false) => {
     if (value === undefined || value === null) {
       return "$0.00";
     }
@@ -225,7 +225,7 @@ const HistorySidebar = forwardRef<
                           Base Total:
                         </span>
                         <span className="font-medium">
-                          {formatCurrency(item.totalLowestBase, true)}
+                          {formatCurrency(item.totalLowestBase)}
                         </span>
                       </div>
                       <div className="flex justify-between">
@@ -233,13 +233,13 @@ const HistorySidebar = forwardRef<
                           Discounted Total:
                         </span>
                         <span className="font-medium">
-                          {formatCurrency(item.totalSelectedDiscounted, true)}
+                          {formatCurrency(item.totalSelectedDiscounted)}
                         </span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Savings:</span>
                         <span className="font-medium text-green-600 dark:text-green-400">
-                          {formatCurrency(item.costSaving, true)}
+                          {formatCurrency(item.costSaving)}
                         </span>
                       </div>
                     </div>

@@ -24,7 +24,7 @@ interface Results {
 export const useAllianceCombinations = () => {
   const [contracts, setContracts] = useState(2);
   const [tenderers, setTenderers] = useState(2);
-  const [useAverageDOP, setUseAverageDOP] = useState(false);
+  const [useAverageDOP, setUseAverageDOP] = useState(true);
   const [prices, setPrices] = useState<number[][]>([]);
   const [discounts, setDiscounts] = useState<number[][][]>([]);
   const [results, setResults] = useState<Results | null>(null);
@@ -79,12 +79,12 @@ export const useAllianceCombinations = () => {
       const newDiscounts = prevDiscounts.map((tenderDiscounts, tenderIndex) =>
         tenderIndex === t
           ? tenderDiscounts.map((contractDops, contractIndex) =>
-              contractIndex === c
-                ? contractDops.map((dopValue, dopIndex) =>
-                    dopIndex === dop ? numValue : dopValue
-                  )
-                : contractDops
-            )
+            contractIndex === c
+              ? contractDops.map((dopValue, dopIndex) =>
+                dopIndex === dop ? numValue : dopValue
+              )
+              : contractDops
+          )
           : tenderDiscounts
       );
       return newDiscounts;
@@ -175,13 +175,13 @@ export const useAllianceCombinations = () => {
     let validDiscounts = discounts;
 
     if (!prices || !Array.isArray(prices) || prices.length !== m ||
-        !prices.every(row => Array.isArray(row) && row.length === n)) {
+      !prices.every(row => Array.isArray(row) && row.length === n)) {
       console.warn("Invalid prices structure detected, repairing...");
       validPrices = Array(m).fill(0).map(() => Array(n).fill(0));
     }
     if (!discounts || !Array.isArray(discounts) || discounts.length !== m ||
-        !discounts.every(row => Array.isArray(row) && row.length === n &&
-          row.every(col => Array.isArray(col) && col.length === n))) {
+      !discounts.every(row => Array.isArray(row) && row.length === n &&
+        row.every(col => Array.isArray(col) && col.length === n))) {
       console.warn("Invalid discounts structure detected, repairing...");
       validDiscounts = Array(m).fill(0).map(() => Array(n).fill(0).map(() => Array(n).fill(0)));
     }
@@ -416,7 +416,7 @@ export const useAllianceCombinations = () => {
     };
   };
 
-  const formatCurrency = (value: number | undefined | null, abbreviated: boolean = true) => {
+  const formatCurrency = (value: number | undefined | null, abbreviated: boolean = false) => {
     if (value === undefined || value === null) {
       return "$0.00";
     }
