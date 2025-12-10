@@ -681,7 +681,7 @@ export default memo(function AllianceCombinationsCalculator() {
               <h1 className="text-2xl font-bold">
                 Alliance Combinations Calculator
               </h1>
-              <p className="text-sm text-muted-foreground">v3.1.0</p>
+              <p className="text-sm text-muted-foreground">v3.1.1</p>
             </div>
           </header>
           <Tabs
