@@ -1,11 +1,14 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 
-// Define types for results and combinations
+// --- Extended Type Definitions ---
 interface Combination {
   assignment: number[];
   contractCosts: number[];
   total: number;
   tendererCounts: number[];
+  // Metadata tags for the UI to highlight strategic opportunities
+  isGlobalBest?: boolean;
+  isNicheOptimization?: boolean;
 }
 
 interface Results {
@@ -14,6 +17,7 @@ interface Results {
   costSaving: number;
   combinations: Combination[];
   bestCombo: Combination | null;
+  nicheCombos: Combination[]; // Explicitly separated out for UI visibility
   totalCombos: number;
   totalPossibleCombos: number;
   prices: number[][];
@@ -22,6 +26,7 @@ interface Results {
 }
 
 export const useAllianceCombinations = () => {
+  // --- State Configuration ---
   const [contracts, setContracts] = useState(2);
   const [tenderers, setTenderers] = useState(2);
   const [useAverageDOP, setUseAverageDOP] = useState(true);
@@ -36,36 +41,40 @@ export const useAllianceCombinations = () => {
   const [displayedCombinations, setDisplayedCombinations] = useState(50);
   const [isLoadingFromHistory, setIsLoadingFromHistory] = useState(false);
 
-  const initializePricesAndDiscounts = () => {
+  // --- Grid & Dimension Matrix Initialization ---
+  const initializePricesAndDiscounts = useCallback(() => {
     const newPrices = Array(tenderers)
       .fill(0)
       .map(() => Array(contracts).fill(0));
     const newDiscounts = Array(tenderers)
       .fill(0)
-      .map(() => Array(contracts).fill(0).map(() => Array(contracts).fill(0)));
+      .map(() =>
+        Array(contracts)
+          .fill(0)
+          .map(() => Array(contracts).fill(0))
+      );
 
     setPrices(newPrices);
     setDiscounts(newDiscounts);
     setResults(null);
     setShowDiscounts(false);
     setDisplayedCombinations(50);
-  };
+  }, [tenderers, contracts]);
 
   useEffect(() => {
     initializePricesAndDiscounts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenderers, contracts]);
+  }, [initializePricesAndDiscounts]);
 
+  // --- Handlers for User Inputs ---
   const handlePriceChange = useCallback((t: number, c: number, value: string) => {
     const numValue = Number(Number.parseFloat(value).toFixed(2)) || 0;
-    setPrices(prevPrices => {
-      const newPrices = prevPrices.map((row, rowIndex) =>
+    setPrices((prevPrices) =>
+      prevPrices.map((row, rowIndex) =>
         rowIndex === t
           ? row.map((cell, colIndex) => (colIndex === c ? numValue : cell))
           : row
-      );
-      return newPrices;
-    });
+      )
+    );
   }, []);
 
   const handleDiscountChange = useCallback((
@@ -75,205 +84,131 @@ export const useAllianceCombinations = () => {
     value: string
   ) => {
     const numValue = Number(Number.parseFloat(value).toFixed(2)) || 0;
-    setDiscounts(prevDiscounts => {
-      const newDiscounts = prevDiscounts.map((tenderDiscounts, tenderIndex) =>
+    setDiscounts((prevDiscounts) =>
+      prevDiscounts.map((tenderDiscounts, tenderIndex) =>
         tenderIndex === t
           ? tenderDiscounts.map((contractDops, contractIndex) =>
-            contractIndex === c
-              ? contractDops.map((dopValue, dopIndex) =>
-                dopIndex === dop ? numValue : dopValue
-              )
-              : contractDops
-          )
+              contractIndex === c
+                ? contractDops.map((dopValue, dopIndex) =>
+                    dopIndex === dop ? numValue : dopValue
+                  )
+                : contractDops
+            )
           : tenderDiscounts
-      );
-      return newDiscounts;
-    });
+      )
+    );
   }, []);
 
+  // --- Mock Generation Utility ---
   const generateRandomData = (
-    contracts: number,
-    tenderers: number,
-    priceMin: number,
-    priceMax: number,
-    discountMax: number
+    cCount: number,
+    tCount: number,
+    pMin: number,
+    pMax: number,
+    dMax: number
   ) => {
-    const prices: number[][] = [];
-    const discounts: number[][][] = [];
+    const randomPrices: number[][] = [];
+    const randomDiscounts: number[][][] = [];
 
-    for (let i = 0; i < tenderers; i++) {
-      prices[i] = [];
-      discounts[i] = [];
-      for (let j = 0; j < contracts; j++) {
-        prices[i][j] =
-          Math.floor(Math.random() * (priceMax - priceMin + 1)) + priceMin;
-        discounts[i][j] = Array(contracts).fill(0);
-        discounts[i][j][0] = 0;
-        for (let dop = 1; dop < contracts; dop++) {
-          const n = Math.random() * discountMax;
-          discounts[i][j][dop] = Number(n.toFixed(4));
+    for (let i = 0; i < tCount; i++) {
+      randomPrices[i] = [];
+      randomDiscounts[i] = [];
+      for (let j = 0; j < cCount; j++) {
+        randomPrices[i][j] = Math.floor(Math.random() * (pMax - pMin + 1)) + pMin;
+        randomDiscounts[i][j] = Array(cCount).fill(0);
+        for (let dop = 1; dop < cCount; dop++) {
+          randomDiscounts[i][j][dop] = Number((Math.random() * dMax).toFixed(4));
         }
       }
     }
-
-    return { prices, discounts };
+    return { prices: randomPrices, discounts: randomDiscounts };
   };
 
-  const calculateResults = () => {
-    try {
-      const results = generateResults(
-        prices,
-        discounts,
-        contracts,
-        tenderers,
-        useAverageDOP
-      );
-      setResults(results);
-      setDisplayedCombinations(50);
-    } catch (error) {
-      console.error("Error calculating results:", error);
-    }
-  };
-
-  const calculateRandomResults = () => {
-    try {
-      const { prices: newPrices, discounts: newDiscounts } = generateRandomData(
-        contracts,
-        tenderers,
-        priceMin,
-        priceMax,
-        discountMax
-      );
-      const results = generateResults(
-        newPrices,
-        newDiscounts,
-        contracts,
-        tenderers,
-        useAverageDOP
-      );
-      setPrices(newPrices);
-      setDiscounts(newDiscounts);
-      setResults(results);
-      setDisplayedCombinations(50);
-    } catch (error) {
-      console.error("Error calculating random results:", error);
-    }
-  };
-
-  const generateResults = (
-    prices: number[][],
-    discounts: number[][][],
-    contracts: number,
-    tenderers: number,
-    useAverageDOP = false
+  // --- Core Analytical Calculation Processing Engine ---
+  const generateResults = useCallback((
+    currentPrices: number[][],
+    currentDiscounts: number[][][],
+    cCount: number,
+    tCount: number,
+    avgDop = false
   ): Results => {
-    const n = contracts;
-    const m = tenderers;
+    const n = cCount;
+    const m = tCount;
 
-    // Safeguard: ensure prices and discounts have correct structure
-    let validPrices = prices;
-    let validDiscounts = discounts;
+    const validPrices =
+      Array.isArray(currentPrices) && currentPrices.length === m
+        ? currentPrices.map((row) => [...row])
+        : Array(m).fill(0).map(() => Array(n).fill(0));
 
-    if (!prices || !Array.isArray(prices) || prices.length !== m ||
-      !prices.every(row => Array.isArray(row) && row.length === n)) {
-      console.warn("Invalid prices structure detected, repairing...");
-      validPrices = Array(m).fill(0).map(() => Array(n).fill(0));
-    }
-    if (!discounts || !Array.isArray(discounts) || discounts.length !== m ||
-      !discounts.every(row => Array.isArray(row) && row.length === n &&
-        row.every(col => Array.isArray(col) && col.length === n))) {
-      console.warn("Invalid discounts structure detected, repairing...");
-      validDiscounts = Array(m).fill(0).map(() => Array(n).fill(0).map(() => Array(n).fill(0)));
-    }
+    const validDiscounts =
+      Array.isArray(currentDiscounts) && currentDiscounts.length === m
+        ? currentDiscounts.map((row) => row.map((dopArr) => [...dopArr]))
+        : Array(m).fill(0).map(() =>
+            Array(n).fill(0).map(() => Array(n).fill(0))
+          );
 
-    // Use the validated/repair structures
-    prices = validPrices;
-    discounts = validDiscounts;
-
-    const processedDiscounts = discounts.map((tenderDiscounts) =>
-      tenderDiscounts.map((contractDops) => contractDops.slice())
-    );
-    if (useAverageDOP) {
+    if (avgDop) {
       for (let t = 0; t < m; t++) {
         const avgDiscounts = Array(n).fill(0);
         for (let dop = 0; dop < n; dop++) {
-          const validDops = processedDiscounts[t]
+          const validDops = validDiscounts[t]
             .map((contractDops) => contractDops[dop])
-            .filter((d, c) => prices[t][c] > 0);
+            .filter((_, c) => validPrices[t][c] > 0);
           if (validDops.length > 0) {
-            const avg =
-              validDops.reduce((sum, d) => sum + d, 0) / validDops.length;
+            const avg = validDops.reduce((sum, d) => sum + d, 0) / validDops.length;
             avgDiscounts[dop] = Number(avg.toFixed(2));
           }
         }
         for (let c = 0; c < n; c++) {
-          processedDiscounts[t][c] = avgDiscounts.slice();
+          validDiscounts[t][c] = [...avgDiscounts];
         }
       }
     }
 
+    // Determine baseline standalone minimum cost options
     const lowestBasePrices = Array(n)
       .fill(0)
       .map((_, j) => {
-        const validPrices = prices.map((t) => t[j]).filter((p) => p > 0);
-        return validPrices.length > 0
-          ? Number(Math.min(...validPrices).toFixed(2))
+        const validRowPrices = validPrices.map((t) => t[j]).filter((p) => p > 0);
+        return validRowPrices.length > 0
+          ? Number(Math.min(...validRowPrices).toFixed(2))
           : 0;
       });
+
     const totalLowestBase = Number(
       lowestBasePrices.reduce((a, b) => a + b, 0).toFixed(2)
     );
-
     const totalPossibleCombos = Math.pow(m, n);
+
+    // Calculate how many total contracts each tenderer submitted bids for (to detect niche packages)
+    const tendererTotalBidPoolCounts = Array(m)
+      .fill(0)
+      .map((_, t) => validPrices[t].filter((p) => p > 0).length);
 
     const validCosts: { dop: number; cost: number }[][][] = Array(m)
       .fill(0)
       .map(() => Array(n).fill(0).map(() => []));
 
-    function calculateContractCost(
-      tenderer: number,
-      contract: number,
-      dop: number
-    ) {
-      if (prices[tenderer][contract] === 0) return Infinity;
-      const discountPercentage = processedDiscounts[tenderer][contract][dop];
-      const discount = Number((discountPercentage / 100).toFixed(4));
-      const cost = prices[tenderer][contract] * (1 - discount);
-      return Number(cost.toFixed(2));
-    }
-
     for (let t = 0; t < m; t++) {
       for (let c = 0; c < n; c++) {
-        if (prices[t][c] === 0) continue;
+        if (validPrices[t][c] === 0) continue;
         for (let dop = 0; dop < n; dop++) {
-          const cost = calculateContractCost(t, c, dop);
-          if (cost !== Infinity && cost <= lowestBasePrices[c]) {
-            validCosts[t][c].push({ dop, cost });
-          }
-        }
-        if (
-          validCosts[t][c].length === 0 &&
-          prices[t][c] > 0 &&
-          prices[t][c] <= lowestBasePrices[c]
-        ) {
-          validCosts[t][c].push({
-            dop: 0,
-            cost: Number(prices[t][c].toFixed(2)),
-          });
+          const discountPercentage = validDiscounts[t][c][dop];
+          const cost = Number(
+            (validPrices[t][c] * (1 - discountPercentage / 100)).toFixed(2)
+          );
+          validCosts[t][c].push({ dop, cost });
         }
       }
     }
 
-    const validContracts = Array(n)
-      .fill(false)
-      .map((_, c) => validCosts.some((t) => t[c].length > 0));
-    const validContractIndices = validContracts
-      .map((valid, idx) => (valid ? idx : -1))
-      .filter((idx) => idx !== -1);
-    const numValidContracts = validContractIndices.length;
+    const validContractIndices = Array(n)
+      .fill(0)
+      .map((_, c) => c)
+      .filter((c) => validCosts.some((t) => t[c].length > 0));
 
-    const combinations: Combination[] = [];
-    let bestTotal = Infinity;
+    const numValidContracts = validContractIndices.length;
+    const allValidCombinations: Combination[] = [];
 
     if (numValidContracts === 0) {
       return {
@@ -282,237 +217,205 @@ export const useAllianceCombinations = () => {
         costSaving: totalLowestBase,
         combinations: [],
         bestCombo: null,
+        nicheCombos: [],
         totalCombos: 0,
         totalPossibleCombos,
-        prices,
-        discounts: processedDiscounts,
+        prices: validPrices,
+        discounts: validDiscounts,
       };
     }
 
-    const adjustedTotalPossibleCombos = Math.pow(m, numValidContracts);
-
-    function exhaustiveSearch(
-      current: number[] = [],
-      tendererCounts: number[] = Array(m).fill(0)
-    ) {
-      if (current.length === numValidContracts) {
-        const fullAssignment = Array(n).fill(-1);
-        const contractCosts = Array(n).fill(0);
-        validContractIndices.forEach((contractIdx, i) => {
-          const tenderer = current[i];
-          fullAssignment[contractIdx] = tenderer;
-          const validOptions = validCosts[tenderer][contractIdx];
-          const dop = tendererCounts[tenderer] - 1;
-          const option =
-            validOptions.find((o) => o.dop === dop) ||
-            validOptions.find((o) => o.dop === 0);
-          contractCosts[contractIdx] = option ? option.cost : Infinity;
-        });
-        const total = Number(
-          contractCosts.reduce((a, b) => a + b, 0).toFixed(2)
-        );
-        if (total !== Infinity) {
-          combinations.push({
-            assignment: fullAssignment.slice(),
-            total,
-            contractCosts: contractCosts.map((cost) =>
-              Number(cost.toFixed(2))
-            ),
-            tendererCounts: tendererCounts.slice(),
-          });
-          bestTotal = Math.min(bestTotal, total);
-        }
-        return;
-      }
-      const contractIdx = validContractIndices[current.length];
-      for (let t = 0; t < m; t++) {
-        if (validCosts[t][contractIdx].length === 0) continue;
-        const newCounts = tendererCounts.slice();
-        newCounts[t]++;
-        exhaustiveSearch([...current, t], newCounts);
-      }
-    }
-
+    // Recursive search tree
     function branchAndBound(
       current: number[] = [],
       tendererCounts: number[] = Array(m).fill(0),
       currentTotal = 0
     ) {
+      // Allow exploration up to total raw base ceiling to capture interesting split cases
+      if (currentTotal > totalLowestBase) return;
+
       if (current.length === numValidContracts) {
         const fullAssignment = Array(n).fill(-1);
         const contractCosts = Array(n).fill(0);
-        validContractIndices.forEach((contractIdx, i) => {
+        let passesIndividualCeilingRule = true;
+
+        for (let i = 0; i < numValidContracts; i++) {
+          const contractIdx = validContractIndices[i];
           const tenderer = current[i];
+          
           fullAssignment[contractIdx] = tenderer;
+          
           const validOptions = validCosts[tenderer][contractIdx];
-          const dop = tendererCounts[tenderer] - 1;
+          const dop = Math.max(0, tendererCounts[tenderer] - 1);
+          
           const option =
             validOptions.find((o) => o.dop === dop) ||
             validOptions.find((o) => o.dop === 0);
-          contractCosts[contractIdx] = option ? option.cost : Infinity;
-        });
-        const total = Number(
-          contractCosts.reduce((a, b) => a + b, 0).toFixed(2)
-        );
-        if (total !== Infinity) {
-          combinations.push({
-            assignment: fullAssignment.slice(),
-            total,
-            contractCosts: contractCosts.map((cost) =>
-              Number(cost.toFixed(2))
-            ),
-            tendererCounts: tendererCounts.slice(),
-          });
-          bestTotal = Math.min(bestTotal, total);
+            
+          const finalCost = option ? option.cost : validPrices[tenderer][contractIdx];
+          contractCosts[contractIdx] = finalCost;
+
+          // Standalone ceiling verification
+          if (finalCost > lowestBasePrices[contractIdx]) {
+            passesIndividualCeilingRule = false;
+            break;
+          }
+        }
+
+        if (passesIndividualCeilingRule) {
+          const total = Number(contractCosts.reduce((a, b) => a + b, 0).toFixed(2));
+          
+          if (total <= totalLowestBase) {
+            let isNicheOptimization = false;
+
+            // STRATEGIC ANALYSIS RULE: Check if this combination contains a tenderer
+            // who bid on a limited pool of contracts (<= 50% of overall pack) but won ALL of them.
+            for (let t = 0; t < m; t++) {
+              const totalBidsSubmittedByThem = tendererTotalBidPoolCounts[t];
+              const totalContractsAwardedToThemInThisBranch = tendererCounts[t];
+
+              if (
+                totalBidsSubmittedByThem > 0 &&
+                totalBidsSubmittedByThem <= Math.ceil(n / 2) && 
+                totalContractsAwardedToThemInThisBranch === totalBidsSubmittedByThem
+              ) {
+                isNicheOptimization = true;
+                break;
+              }
+            }
+
+            allValidCombinations.push({
+              assignment: fullAssignment,
+              total,
+              contractCosts,
+              tendererCounts: [...tendererCounts],
+              isNicheOptimization,
+            });
+          }
         }
         return;
       }
 
       const contractIdx = validContractIndices[current.length];
       for (let t = 0; t < m; t++) {
-        const validOptions = validCosts[t][contractIdx];
-        if (validOptions.length === 0) continue;
+        if (validCosts[t][contractIdx].length === 0) continue;
 
-        const newCounts = tendererCounts.slice();
-        newCounts[t]++;
-        const dop = newCounts[t] - 1;
+        const nextCounts = [...tendererCounts];
+        nextCounts[t]++;
+
+        const dop = Math.max(0, nextCounts[t] - 1);
+        const validOptions = validCosts[t][contractIdx];
         const option =
           validOptions.find((o) => o.dop === dop) ||
           validOptions.find((o) => o.dop === 0);
-        const cost = option ? option.cost : Infinity;
-
-        if (cost === Infinity) continue;
+        const cost = option ? option.cost : validPrices[t][contractIdx];
 
         branchAndBound(
           [...current, t],
-          newCounts,
+          nextCounts,
           Number((currentTotal + cost).toFixed(2))
         );
       }
     }
 
     branchAndBound();
+    
+    // Sort ascending by lowest overall cost
+    allValidCombinations.sort((a, b) => a.total - b.total);
 
-    combinations.sort((a, b) => a.total - b.total);
+    // Tag the absolute top winner
+    if (allValidCombinations.length > 0) {
+      allValidCombinations[0].isGlobalBest = true;
+    }
 
-    const bestCombo = combinations[0] || null;
-    const totalSelectedDiscounted = bestCombo
-      ? bestCombo.total
-      : totalLowestBase;
-    const costSaving = Number(
-      Math.max(0, totalLowestBase - totalSelectedDiscounted).toFixed(2)
-    );
+    const bestCombo = allValidCombinations[0] || null;
+    const totalSelectedDiscounted = bestCombo ? bestCombo.total : totalLowestBase;
+    const costSaving = Number(Math.max(0, totalLowestBase - totalSelectedDiscounted).toFixed(2));
+
+    // Extract niche specialty combinations explicitly so they can be isolated in rendering
+    const nicheCombos = allValidCombinations.filter((c) => c.isNicheOptimization);
 
     return {
       totalLowestBase,
       totalSelectedDiscounted,
       costSaving,
-      combinations,
+      combinations: allValidCombinations,
       bestCombo,
-      totalCombos: combinations.length,
-      totalPossibleCombos: adjustedTotalPossibleCombos,
-      prices,
-      discounts: processedDiscounts,
+      nicheCombos, 
+      totalCombos: allValidCombinations.length,
+      totalPossibleCombos: Math.pow(m, numValidContracts),
+      prices: validPrices,
+      discounts: validDiscounts,
     };
+  }, []);
+
+  // --- Operational Trigger Hooks ---
+  const calculateResults = () => {
+    const calculated = generateResults(prices, discounts, contracts, tenderers, useAverageDOP);
+    setResults(calculated);
+    setDisplayedCombinations(50);
   };
 
-  const formatCurrency = (value: number | undefined | null, abbreviated: boolean = false) => {
-    if (value === undefined || value === null) {
-      return "$0.00";
-    }
-
-    try {
-      if (abbreviated) {
-        // For very large amounts, use abbreviated notation
-        if (value >= 1000000000) { // Billions
-          return `$${(value / 1000000000).toFixed(2)}B`;
-        } else if (value >= 1000000) { // Millions
-          return `$${(value / 1000000).toFixed(2)}M`;
-        } else if (value >= 1000) { // Thousands
-          return `$${(value / 1000).toFixed(2)}K`;
-        } else {
-          return `$${value.toLocaleString()}`;
-        }
-      } else {
-        // Full currency format with comma separation
-        return `$${value.toLocaleString()}`;
-      }
-    } catch (error) {
-      console.error("Error formatting currency:", error, "Value:", value);
-      return "$0.00";
-    }
+  const calculateRandomResults = () => {
+    const { prices: rPrices, discounts: rDiscounts } = generateRandomData(
+      contracts,
+      tenderers,
+      priceMin,
+      priceMax,
+      discountMax
+    );
+    setPrices(rPrices);
+    setDiscounts(rDiscounts);
+    const calculated = generateResults(rPrices, rDiscounts, contracts, tenderers, useAverageDOP);
+    setResults(calculated);
+    setDisplayedCombinations(50);
   };
 
-  useEffect(() => {
-    if (
-      !prices.length ||
-      prices.length !== tenderers ||
-      (prices.length > 0 && prices[0].length !== contracts) ||
-      !prices.every(row => Array.isArray(row)) ||
-      !discounts.length ||
-      discounts.length !== tenderers ||
-      (discounts.length > 0 && (!discounts[0].length || discounts[0].length !== contracts)) ||
-      !discounts.every(row => Array.isArray(row) && row.every(col => Array.isArray(col)))
-    ) {
-      initializePricesAndDiscounts();
+  const formatCurrency = (value: number | undefined | null, abbreviated = false) => {
+    if (value === null || value === undefined) return "$0.00";
+    if (abbreviated) {
+      if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+      if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+      if (value >= 1e3) return `$${(value / 1e3).toFixed(2)}K`;
     }
-  }, [contracts, tenderers, prices, discounts, initializePricesAndDiscounts]);
+    return `$${value.toLocaleString()}`;
+  };
 
-  // Auto-calculate when loading from history
   useEffect(() => {
     if (isLoadingFromHistory && prices.length > 0 && discounts.length > 0) {
       calculateResults();
       setIsLoadingFromHistory(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoadingFromHistory, prices, discounts]);
 
-  const safeArrayReduce = (arr: number[] | undefined, initialValue: number) => {
-    if (!arr || !Array.isArray(arr)) return initialValue;
-    return arr.reduce((sum, val) => sum + (val || 0), initialValue);
-  };
-
-  const loadMoreCombinations = () => {
-    setDisplayedCombinations((prev) => prev + 50);
-  };
-
-  const handleTabChange = (value: string) => {
-    setActiveTab(value as "manual" | "random");
-    if (value === "manual") {
-      initializePricesAndDiscounts();
-    }
-  };
-
   return {
-    contracts,
-    setContracts,
-    tenderers,
-    setTenderers,
-    useAverageDOP,
-    setUseAverageDOP,
-    prices,
-    setPrices,
-    discounts,
-    setDiscounts,
+    contracts, setContracts,
+    tenderers, setTenderers,
+    useAverageDOP, setUseAverageDOP,
+    prices, setPrices,
+    discounts, setDiscounts,
     results,
-    showDiscounts,
-    setShowDiscounts,
+    showDiscounts, setShowDiscounts,
     activeTab,
-    handleTabChange,
-    priceMin,
-    setPriceMin,
-    priceMax,
-    setPriceMax,
-    discountMax,
-    setDiscountMax,
+    handleTabChange: (val: string) => {
+      setActiveTab(val as "manual" | "random");
+      if (val === "manual") initializePricesAndDiscounts();
+    },
+    priceMin, setPriceMin,
+    priceMax, setPriceMax,
+    discountMax, setDiscountMax,
     displayedCombinations,
     handlePriceChange,
     handleDiscountChange,
     calculateResults,
     calculateRandomResults,
     formatCurrency,
-    safeArrayReduce,
-    loadMoreCombinations,
-    isLoadingFromHistory,
-    setIsLoadingFromHistory,
+    safeArrayReduce: (arr: number[] | undefined, initialValue: number) =>
+      !arr || !Array.isArray(arr)
+        ? initialValue
+        : arr.reduce((sum, val) => sum + (val || 0), initialValue),
+    loadMoreCombinations: () => setDisplayedCombinations((prev) => prev + 50),
+    isLoadingFromHistory, setIsLoadingFromHistory,
   };
 };
