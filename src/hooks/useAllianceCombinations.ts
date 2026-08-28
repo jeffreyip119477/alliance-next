@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { generateResults as computeAllianceResults } from "@/lib/alliance-combinations";
 
 // --- Extended Type Definitions ---
 interface Combination {
@@ -77,27 +78,23 @@ export const useAllianceCombinations = () => {
     );
   }, []);
 
-  const handleDiscountChange = useCallback((
-    t: number,
-    c: number,
-    dop: number,
-    value: string
-  ) => {
-    const numValue = Number(Number.parseFloat(value).toFixed(2)) || 0;
-    setDiscounts((prevDiscounts) =>
-      prevDiscounts.map((tenderDiscounts, tenderIndex) =>
-        tenderIndex === t
-          ? tenderDiscounts.map((contractDops, contractIndex) =>
-              contractIndex === c
-                ? contractDops.map((dopValue, dopIndex) =>
-                    dopIndex === dop ? numValue : dopValue
-                  )
-                : contractDops
-            )
-          : tenderDiscounts
-      )
-    );
-  }, []);
+  const handleDiscountChange = useCallback(
+    (t: number, c: number, dop: number, value: string) => {
+      const numValue = Number(Number.parseFloat(value).toFixed(2)) || 0;
+      setDiscounts((prevDiscounts) =>
+        prevDiscounts.map((tenderDiscounts, tenderIndex) =>
+          tenderIndex === t
+            ? tenderDiscounts.map((contractDops, contractIndex) =>
+                contractIndex === c
+                  ? contractDops.map((dopValue, dopIndex) =>
+                      dopIndex === dop ? numValue : dopValue
+                    )
+                  : contractDops
+              )
+            : tenderDiscounts
+        )
+      );
+    }, []);
 
   // --- Mock Generation Utility ---
   const generateRandomData = (
@@ -125,229 +122,10 @@ export const useAllianceCombinations = () => {
   };
 
   // --- Core Analytical Calculation Processing Engine ---
-  const generateResults = useCallback((
-    currentPrices: number[][],
-    currentDiscounts: number[][][],
-    cCount: number,
-    tCount: number,
-    avgDop = false
-  ): Results => {
-    const n = cCount;
-    const m = tCount;
-
-    const validPrices =
-      Array.isArray(currentPrices) && currentPrices.length === m
-        ? currentPrices.map((row) => [...row])
-        : Array(m).fill(0).map(() => Array(n).fill(0));
-
-    const validDiscounts =
-      Array.isArray(currentDiscounts) && currentDiscounts.length === m
-        ? currentDiscounts.map((row) => row.map((dopArr) => [...dopArr]))
-        : Array(m).fill(0).map(() =>
-            Array(n).fill(0).map(() => Array(n).fill(0))
-          );
-
-    if (avgDop) {
-      for (let t = 0; t < m; t++) {
-        const avgDiscounts = Array(n).fill(0);
-        for (let dop = 0; dop < n; dop++) {
-          const validDops = validDiscounts[t]
-            .map((contractDops) => contractDops[dop])
-            .filter((_, c) => validPrices[t][c] > 0);
-          if (validDops.length > 0) {
-            const avg = validDops.reduce((sum, d) => sum + d, 0) / validDops.length;
-            avgDiscounts[dop] = Number(avg.toFixed(2));
-          }
-        }
-        for (let c = 0; c < n; c++) {
-          validDiscounts[t][c] = [...avgDiscounts];
-        }
-      }
-    }
-
-    // Determine baseline standalone minimum cost options
-    const lowestBasePrices = Array(n)
-      .fill(0)
-      .map((_, j) => {
-        const validRowPrices = validPrices.map((t) => t[j]).filter((p) => p > 0);
-        return validRowPrices.length > 0
-          ? Number(Math.min(...validRowPrices).toFixed(2))
-          : 0;
-      });
-
-    const totalLowestBase = Number(
-      lowestBasePrices.reduce((a, b) => a + b, 0).toFixed(2)
-    );
-    const totalPossibleCombos = Math.pow(m, n);
-
-    // Calculate how many total contracts each tenderer submitted bids for (to detect niche packages)
-    const tendererTotalBidPoolCounts = Array(m)
-      .fill(0)
-      .map((_, t) => validPrices[t].filter((p) => p > 0).length);
-
-    const validCosts: { dop: number; cost: number }[][][] = Array(m)
-      .fill(0)
-      .map(() => Array(n).fill(0).map(() => []));
-
-    for (let t = 0; t < m; t++) {
-      for (let c = 0; c < n; c++) {
-        if (validPrices[t][c] === 0) continue;
-        for (let dop = 0; dop < n; dop++) {
-          const discountPercentage = validDiscounts[t][c][dop];
-          const cost = Number(
-            (validPrices[t][c] * (1 - discountPercentage / 100)).toFixed(2)
-          );
-          validCosts[t][c].push({ dop, cost });
-        }
-      }
-    }
-
-    const validContractIndices = Array(n)
-      .fill(0)
-      .map((_, c) => c)
-      .filter((c) => validCosts.some((t) => t[c].length > 0));
-
-    const numValidContracts = validContractIndices.length;
-    const allValidCombinations: Combination[] = [];
-
-    if (numValidContracts === 0) {
-      return {
-        totalLowestBase,
-        totalSelectedDiscounted: 0,
-        costSaving: totalLowestBase,
-        combinations: [],
-        bestCombo: null,
-        nicheCombos: [],
-        totalCombos: 0,
-        totalPossibleCombos,
-        prices: validPrices,
-        discounts: validDiscounts,
-      };
-    }
-
-    // Recursive search tree
-    function branchAndBound(
-      current: number[] = [],
-      tendererCounts: number[] = Array(m).fill(0),
-      currentTotal = 0
-    ) {
-      // Allow exploration up to total raw base ceiling to capture interesting split cases
-      if (currentTotal > totalLowestBase) return;
-
-      if (current.length === numValidContracts) {
-        const fullAssignment = Array(n).fill(-1);
-        const contractCosts = Array(n).fill(0);
-        let passesIndividualCeilingRule = true;
-
-        for (let i = 0; i < numValidContracts; i++) {
-          const contractIdx = validContractIndices[i];
-          const tenderer = current[i];
-          
-          fullAssignment[contractIdx] = tenderer;
-          
-          const validOptions = validCosts[tenderer][contractIdx];
-          const dop = Math.max(0, tendererCounts[tenderer] - 1);
-          
-          const option =
-            validOptions.find((o) => o.dop === dop) ||
-            validOptions.find((o) => o.dop === 0);
-            
-          const finalCost = option ? option.cost : validPrices[tenderer][contractIdx];
-          contractCosts[contractIdx] = finalCost;
-
-          // Standalone ceiling verification
-          if (finalCost > lowestBasePrices[contractIdx]) {
-            passesIndividualCeilingRule = false;
-            break;
-          }
-        }
-
-        if (passesIndividualCeilingRule) {
-          const total = Number(contractCosts.reduce((a, b) => a + b, 0).toFixed(2));
-          
-          if (total <= totalLowestBase) {
-            let isNicheOptimization = false;
-
-            // STRATEGIC ANALYSIS RULE: Check if this combination contains a tenderer
-            // who bid on a limited pool of contracts (<= 50% of overall pack) but won ALL of them.
-            for (let t = 0; t < m; t++) {
-              const totalBidsSubmittedByThem = tendererTotalBidPoolCounts[t];
-              const totalContractsAwardedToThemInThisBranch = tendererCounts[t];
-
-              if (
-                totalBidsSubmittedByThem > 0 &&
-                totalBidsSubmittedByThem <= Math.ceil(n / 2) && 
-                totalContractsAwardedToThemInThisBranch === totalBidsSubmittedByThem
-              ) {
-                isNicheOptimization = true;
-                break;
-              }
-            }
-
-            allValidCombinations.push({
-              assignment: fullAssignment,
-              total,
-              contractCosts,
-              tendererCounts: [...tendererCounts],
-              isNicheOptimization,
-            });
-          }
-        }
-        return;
-      }
-
-      const contractIdx = validContractIndices[current.length];
-      for (let t = 0; t < m; t++) {
-        if (validCosts[t][contractIdx].length === 0) continue;
-
-        const nextCounts = [...tendererCounts];
-        nextCounts[t]++;
-
-        const dop = Math.max(0, nextCounts[t] - 1);
-        const validOptions = validCosts[t][contractIdx];
-        const option =
-          validOptions.find((o) => o.dop === dop) ||
-          validOptions.find((o) => o.dop === 0);
-        const cost = option ? option.cost : validPrices[t][contractIdx];
-
-        branchAndBound(
-          [...current, t],
-          nextCounts,
-          Number((currentTotal + cost).toFixed(2))
-        );
-      }
-    }
-
-    branchAndBound();
-    
-    // Sort ascending by lowest overall cost
-    allValidCombinations.sort((a, b) => a.total - b.total);
-
-    // Tag the absolute top winner
-    if (allValidCombinations.length > 0) {
-      allValidCombinations[0].isGlobalBest = true;
-    }
-
-    const bestCombo = allValidCombinations[0] || null;
-    const totalSelectedDiscounted = bestCombo ? bestCombo.total : totalLowestBase;
-    const costSaving = Number(Math.max(0, totalLowestBase - totalSelectedDiscounted).toFixed(2));
-
-    // Extract niche specialty combinations explicitly so they can be isolated in rendering
-    const nicheCombos = allValidCombinations.filter((c) => c.isNicheOptimization);
-
-    return {
-      totalLowestBase,
-      totalSelectedDiscounted,
-      costSaving,
-      combinations: allValidCombinations,
-      bestCombo,
-      nicheCombos, 
-      totalCombos: allValidCombinations.length,
-      totalPossibleCombos: Math.pow(m, numValidContracts),
-      prices: validPrices,
-      discounts: validDiscounts,
-    };
-  }, []);
+  // Pure implementation lives in src/lib/alliance-combinations.ts (unit-tested).
+  const generateResults = useCallback(
+    (currentPrices: number[][], currentDiscounts: number[][][], cCount: number, tCount: number, avgDop = false): Results =>
+      computeAllianceResults(currentPrices, currentDiscounts, cCount, tCount, avgDop), []);
 
   // --- Operational Trigger Hooks ---
   const calculateResults = () => {
