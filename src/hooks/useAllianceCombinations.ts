@@ -1,88 +1,749 @@
-import { useState, useEffect, useCallback } from "react";
-import { generateResults as computeAllianceResults } from "@/lib/alliance-combinations";
+"use client";
 
-// --- Extended Type Definitions ---
-interface Combination {
-  assignment: number[];
-  contractCosts: number[];
-  total: number;
-  tendererCounts: number[];
-  // Metadata tags for the UI to highlight strategic opportunities
-  isGlobalBest?: boolean;
-  isNicheOptimization?: boolean;
-}
+// State + calculation orchestration for the alliance combinations tool.
+//
+// Design notes:
+// - Calculation runs in a Web Worker (src/workers/calculator.ts) with a
+//   request-id race guard; a synchronous fallback exists for SSR/no-worker.
+// - The main thread never blocks: large grids stay responsive.
+// - Results are always computed for the CURRENT SCENARIO: if the user has
+//   selected a subset of contracts, the grid is projected (see
+//   src/lib/projection.ts) so DoP ladders reindex to the selected count k.
+// - Draft (grid + settings) autosaves to localStorage so manual input
+//   survives refresh. History is saved only on explicit calculate actions.
+// - No alert(), no setTimeout(100) load path, no in-place state mutation.
 
-interface Results {
-  totalLowestBase: number;
-  totalSelectedDiscounted: number;
-  costSaving: number;
-  combinations: Combination[];
-  bestCombo: Combination | null;
-  nicheCombos: Combination[]; // Explicitly separated out for UI visibility
-  totalCombos: number;
-  totalPossibleCombos: number;
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  generateResults,
+  type EngineOptions,
+  type Results,
+} from "@/lib/alliance-combinations";
+import { projectToSelectedContracts } from "@/lib/projection";
+import type { CalcRequest, CalcResponse } from "@/workers/calculator";
+import {
+  formatMoney,
+  parseMoney,
+} from "@/lib/currency";
+
+export interface Snapshot {
+  contracts: number;
+  tenderers: number;
   prices: number[][];
   discounts: number[][][];
-  dopDifferences?: boolean[][];
+  tendererNames: string[];
+  contractNames: string[];
+  selectedContracts: number[];
+  useAverageDOP: boolean;
+  fastMode: boolean;
 }
 
+export interface HistoryItem {
+  id: string;
+  savedAt: number;
+  name: string;
+  source: "manual" | "random";
+  snapshot: Snapshot;
+}
+
+export interface Scenario {
+  id: string;
+  name: string;
+  savedAt: number;
+  snapshot: Snapshot;
+  bestTotal: number | null;
+}
+
+export interface WhatIf {
+  t: number;
+  c: number;
+  tier: number;
+  deltaPct: number;
+}
+
+interface Draft {
+  contracts: number;
+  tenderers: number;
+  prices: number[][];
+  discounts: number[][][];
+  tendererNames: string[];
+  contractNames: string[];
+  selectedContracts: number[];
+  useAverageDOP: boolean;
+  fastMode: boolean;
+}
+
+const HISTORY_KEY = "alliance-calculator-history";
+const DRAFT_KEY = "alliance-calculator-draft";
+const SCENARIOS_KEY = "alliance-calculator-scenarios";
+const HISTORY_LIMIT = 50;
+
+const allIndices = (n: number): number[] => Array.from({ length: n }, (_, i) => i);
+
+const readJson = <T,>(key: string): T | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeJson = (key: string, value: unknown): void => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage full or unavailable — non-fatal.
+  }
+};
+
+const makeId = (prefix: string): string =>
+  `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+/** True when a value looks like a well-formed Snapshot (contracts/tenderers + grids). */
+const isSnapshot = (s: unknown): s is Snapshot =>
+  !!s &&
+  typeof (s as Snapshot).contracts === "number" &&
+  typeof (s as Snapshot).tenderers === "number" &&
+  Array.isArray((s as Snapshot).prices) &&
+  Array.isArray((s as Snapshot).discounts);
+
+/**
+ * Normalize a raw history entry from localStorage. Accepts the current
+ * { id, savedAt, name, source, snapshot } shape as-is, migrates the pre-snapshot
+ * legacy shape ({ id, timestamp, contracts, tenderers, ..., prices, discounts })
+ * into the new shape, and returns null for anything malformed (so it is dropped
+ * rather than crashing the sidebar).
+ */
+const normalizeHistoryItem = (raw: unknown): HistoryItem | null => {
+  if (!raw || typeof raw !== "object") return null;
+  const item = raw as Record<string, unknown>;
+
+  if (isSnapshot(item.snapshot)) {
+    return {
+      id: typeof item.id === "string" ? item.id : makeId("h"),
+      savedAt: typeof item.savedAt === "number" ? item.savedAt : Date.now(),
+      name: typeof item.name === "string" ? item.name : "Calculation",
+      source: item.source === "random" ? "random" : "manual",
+      snapshot: item.snapshot,
+    };
+  }
+
+  // Legacy (pre-snapshot) shape — migrate to the new format.
+  if (
+    typeof item.contracts === "number" &&
+    typeof item.tenderers === "number" &&
+    Array.isArray(item.prices) &&
+    Array.isArray(item.discounts)
+  ) {
+    const ts = typeof item.timestamp === "number" ? item.timestamp : Date.now();
+    const legacySelection = Array.isArray(item.selectedContracts)
+      ? (item.selectedContracts as unknown[])
+      : [];
+    const selectedContracts: number[] = legacySelection
+      .map((v, i) => (v ? i : -1))
+      .filter((i) => i >= 0);
+    return {
+      id: typeof item.id === "string" ? item.id : makeId("h"),
+      savedAt: ts,
+      name: `Manual · ${new Date(ts).toLocaleString()}`,
+      source: "manual",
+      snapshot: {
+        contracts: item.contracts as number,
+        tenderers: item.tenderers as number,
+        prices: item.prices as number[][],
+        discounts: item.discounts as number[][][],
+        tendererNames: Array.isArray(item.tendererNames)
+          ? (item.tendererNames as string[])
+          : [],
+        contractNames: [],
+        selectedContracts,
+        useAverageDOP: true,
+        fastMode: false,
+      },
+    };
+  }
+
+  return null;
+};
+
+/**
+ * Stable identity of a calculation scenario (projected grid + options).
+ * Used to skip redundant auto-recomputes.
+ */
+const scenarioKey = (
+  p: number[][],
+  d: number[][][],
+  c: number,
+  t: number,
+  avgDop: boolean,
+  fastMode: boolean,
+  selection: number[],
+  forced: (number | null)[],
+  forbidden: boolean[][],
+  maxWins: number[]
+): string => {
+  const effective = selection.length > 0 ? selection : allIndices(c);
+  const proj = projectToSelectedContracts(p, d, effective, forced, forbidden);
+  return JSON.stringify([
+    c,
+    t,
+    avgDop,
+    fastMode,
+    proj.prices,
+    proj.discounts,
+    proj.forced ?? null,
+    proj.forbidden ?? null,
+    maxWins,
+  ]);
+};
+
 export const useAllianceCombinations = () => {
-  // --- State Configuration ---
+  // --- dimensions & grid ---
   const [contracts, setContracts] = useState(2);
   const [tenderers, setTenderers] = useState(2);
-  const [useAverageDOP, setUseAverageDOP] = useState(true);
   const [prices, setPrices] = useState<number[][]>([]);
   const [discounts, setDiscounts] = useState<number[][][]>([]);
-  const [results, setResults] = useState<Results | null>(null);
-  const [showDiscounts, setShowDiscounts] = useState(false);
-  const [activeTab, setActiveTab] = useState<"manual" | "random">("manual");
+  const [tendererNames, setTendererNames] = useState<string[]>([]);
+  const [contractNames, setContractNames] = useState<string[]>([]);
+  const [selectedContracts, setSelectedContracts] = useState<number[]>([]);
+
+  // --- settings ---
+  const [useAverageDOP, setUseAverageDOP] = useState(true);
+  const [fastMode, setFastMode] = useState(false);
   const [priceMin, setPriceMin] = useState(450000);
   const [priceMax, setPriceMax] = useState(500000);
   const [discountMax, setDiscountMax] = useState(20);
+  const [showDiscounts, setShowDiscounts] = useState(false);
+  const [activeTab, setActiveTab] = useState<"manual" | "random">("manual");
+
+  // --- constraints (P2 UI binds to these; empty = unconstrained) ---
+  const [forced, setForced] = useState<(number | null)[]>([]);
+  const [forbidden, setForbidden] = useState<boolean[][]>([]);
+  const [maxWins, setMaxWins] = useState<number[]>([]);
+
+  // --- results ---
+  const [results, setResults] = useState<Results | null>(null);
+  const [isCalculating, setIsCalculating] = useState(false);
+  const [calcError, setCalcError] = useState<string | null>(null);
+  const [hasCalculated, setHasCalculated] = useState(false);
   const [displayedCombinations, setDisplayedCombinations] = useState(50);
-  const [isLoadingFromHistory, setIsLoadingFromHistory] = useState(false);
 
-  // --- Grid & Dimension Matrix Initialization ---
-  const initializePricesAndDiscounts = useCallback(() => {
-    const newPrices = Array(tenderers)
-      .fill(0)
-      .map(() => Array(contracts).fill(0));
-    const newDiscounts = Array(tenderers)
-      .fill(0)
-      .map(() =>
-        Array(contracts)
-          .fill(0)
-          .map(() => Array(contracts).fill(0))
+  // --- what-if / comparison / scenarios ---
+  const [whatIf, setWhatIf] = useState<WhatIf | null>(null);
+  const [comparison, setComparison] = useState<Results | null>(null);
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+
+  // --- history ---
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+
+  const workerRef = useRef<Worker | null>(null);
+  const requestSeq = useRef(0);
+  const lastInputKeyRef = useRef<string>("");
+
+  // --- worker lifecycle ---
+  useEffect(() => {
+    if (typeof Worker === "undefined") return;
+    const worker = new Worker(
+      new URL("../workers/calculator.ts", import.meta.url),
+      { type: "module" }
+    );
+    workerRef.current = worker;
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  // --- core computation (worker with race guard, sync fallback) ---
+  const compute = useCallback(
+    (
+      p: number[][],
+      d: number[][][],
+      cCount: number,
+      tCount: number,
+      avgDop: boolean,
+      options: EngineOptions,
+      key: string
+    ) => {
+      const id = ++requestSeq.current;
+      lastInputKeyRef.current = key;
+      setIsCalculating(true);
+      setCalcError(null);
+
+      const settle = (resp: CalcResponse) => {
+        if (resp.id !== id) return; // stale response — ignore
+        setIsCalculating(false);
+        if ("error" in resp) {
+          setCalcError(resp.error);
+          setResults(null);
+          return;
+        }
+        setResults(resp.results);
+      };
+
+      const worker = workerRef.current;
+      if (!worker) {
+        // SSR or worker unavailable: synchronous fallback (identical output).
+        try {
+          const r = generateResults(p, d, cCount, tCount, avgDop, options);
+          if (id === requestSeq.current) {
+            setResults(r);
+            setCalcError(null);
+            setIsCalculating(false);
+          }
+        } catch (err) {
+          if (id === requestSeq.current) {
+            setCalcError(err instanceof Error ? err.message : String(err));
+            setResults(null);
+            setIsCalculating(false);
+          }
+        }
+        return;
+      }
+
+      worker.onmessage = (event: MessageEvent<CalcResponse>) => settle(event.data);
+      const req: CalcRequest = {
+        id,
+        prices: p,
+        discounts: d,
+        cCount,
+        tCount,
+        avgDop,
+        options,
+      };
+      worker.postMessage(req);
+    },
+    []
+  );
+
+  // Compute the current scenario (projected if contracts are selected).
+  const computeCurrent = useCallback(
+    (
+      p: number[][],
+      d: number[][][],
+      c: number,
+      t: number,
+      avgDop: boolean,
+      fm: boolean,
+      selection: number[],
+      f: (number | null)[],
+      fb: boolean[][],
+      mw: number[]
+    ) => {
+      const effective = selection.length > 0 ? selection : allIndices(c);
+      const proj = projectToSelectedContracts(p, d, effective, f, fb);
+      const options: EngineOptions = {
+        fastMode: fm,
+        forced: proj.forced,
+        forbidden: proj.forbidden,
+        maxWins: mw,
+      };
+      compute(
+        proj.prices,
+        proj.discounts,
+        proj.cCount,
+        t,
+        avgDop,
+        options,
+        scenarioKey(p, d, c, t, avgDop, fm, selection, f, fb, mw)
       );
+    },
+    [compute]
+  );
 
-    setPrices(newPrices);
-    setDiscounts(newDiscounts);
+  // --- grid sizing: preserve overlapping values, regenerate default names ---
+  useEffect(() => {
+    setPrices((prev) =>
+      Array.from({ length: tenderers }, (_, t) =>
+        Array.from({ length: contracts }, (_, c) => prev[t]?.[c] ?? 0)
+      )
+    );
+    setDiscounts((prev) =>
+      Array.from({ length: tenderers }, (_, t) =>
+        Array.from({ length: contracts }, (_, c) =>
+          Array.from({ length: contracts }, (_, d) => prev[t]?.[c]?.[d] ?? 0)
+        )
+      )
+    );
+    setTendererNames((prev) =>
+      prev.length === tenderers
+        ? prev
+        : Array.from({ length: tenderers }, (_, i) => `Tenderer ${i + 1}`)
+    );
+    setContractNames((prev) =>
+      prev.length === contracts
+        ? prev
+        : Array.from({ length: contracts }, (_, i) => `Contract ${i + 1}`)
+    );
+    setSelectedContracts((prev) => prev.filter((i) => i >= 0 && i < contracts));
+  }, [contracts, tenderers]);
+
+  // --- mount: restore draft + history + scenarios ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const draft = readJson<Draft>(DRAFT_KEY);
+    if (
+      draft &&
+      typeof draft.contracts === "number" &&
+      typeof draft.tenderers === "number" &&
+      Array.isArray(draft.prices) &&
+      draft.prices.length === draft.tenderers &&
+      draft.prices.every((row) => Array.isArray(row) && row.length === draft.contracts) &&
+      Array.isArray(draft.discounts) &&
+      draft.discounts.length === draft.tenderers &&
+      draft.discounts.every(
+        (row) =>
+          Array.isArray(row) &&
+          row.length === draft.contracts &&
+          row.every((ladder) => Array.isArray(ladder))
+      )
+    ) {
+      setContracts(draft.contracts);
+      setTenderers(draft.tenderers);
+      setPrices(draft.prices);
+      setDiscounts(draft.discounts);
+      setUseAverageDOP(draft.useAverageDOP ?? true);
+      setFastMode(draft.fastMode ?? false);
+      if (Array.isArray(draft.tendererNames) && draft.tendererNames.length === draft.tenderers) {
+        setTendererNames(draft.tendererNames);
+      }
+      if (Array.isArray(draft.contractNames) && draft.contractNames.length === draft.contracts) {
+        setContractNames(draft.contractNames);
+      }
+      if (Array.isArray(draft.selectedContracts)) {
+        setSelectedContracts(draft.selectedContracts);
+      }
+    }
+
+    const h = readJson<unknown[]>(HISTORY_KEY);
+    if (Array.isArray(h)) {
+      // Migrate/drop legacy entries so the sidebar never sees a missing snapshot.
+      const normalized = h
+        .map(normalizeHistoryItem)
+        .filter((x): x is HistoryItem => x !== null);
+      setHistory(normalized.slice(0, HISTORY_LIMIT));
+    }
+
+    const s = readJson<Scenario[]>(SCENARIOS_KEY);
+    if (Array.isArray(s)) setScenarios(s);
+  }, []);
+
+  // --- draft autosave (debounced) ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const timer = setTimeout(() => {
+      const draft: Draft = {
+        contracts,
+        tenderers,
+        prices,
+        discounts,
+        tendererNames,
+        contractNames,
+        selectedContracts,
+        useAverageDOP,
+        fastMode,
+      };
+      writeJson(DRAFT_KEY, draft);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [
+    contracts,
+    tenderers,
+    prices,
+    discounts,
+    tendererNames,
+    contractNames,
+    selectedContracts,
+    useAverageDOP,
+    fastMode,
+  ]);
+
+  // --- explicit actions ---
+  const pushHistory = useCallback(
+    (snapshot: Snapshot, source: "manual" | "random") => {
+      const item: HistoryItem = {
+        id: makeId("h"),
+        savedAt: Date.now(),
+        source,
+        name: `${source === "manual" ? "Manual" : "Random"} · ${new Date().toLocaleString()}`,
+        snapshot,
+      };
+      setHistory((prev) => {
+        const next = [item, ...prev].slice(0, HISTORY_LIMIT);
+        writeJson(HISTORY_KEY, next);
+        return next;
+      });
+    },
+    []
+  );
+
+  const makeSnapshot = useCallback(
+    (p: number[][], d: number[][][]): Snapshot => ({
+      contracts,
+      tenderers,
+      prices: p,
+      discounts: d,
+      tendererNames,
+      contractNames,
+      selectedContracts,
+      useAverageDOP,
+      fastMode,
+    }),
+    [contracts, tenderers, tendererNames, contractNames, selectedContracts, useAverageDOP, fastMode]
+  );
+
+  const calculate = useCallback(() => {
+    computeCurrent(
+      prices,
+      discounts,
+      contracts,
+      tenderers,
+      useAverageDOP,
+      fastMode,
+      selectedContracts,
+      forced,
+      forbidden,
+      maxWins
+    );
+    pushHistory(makeSnapshot(prices, discounts), "manual");
+    setHasCalculated(true);
+    setDisplayedCombinations(50);
+  }, [
+    computeCurrent,
+    prices,
+    discounts,
+    contracts,
+    tenderers,
+    useAverageDOP,
+    fastMode,
+    selectedContracts,
+    forced,
+    forbidden,
+    maxWins,
+    pushHistory,
+    makeSnapshot,
+  ]);
+
+  const generateRandomData = useCallback(
+    (c: number, t: number, pMin: number, pMax: number, dMax: number) => {
+      const randomPrices: number[][] = [];
+      const randomDiscounts: number[][][] = [];
+      for (let i = 0; i < t; i++) {
+        randomPrices[i] = [];
+        randomDiscounts[i] = [];
+        for (let j = 0; j < c; j++) {
+          randomPrices[i][j] =
+            Math.floor(Math.random() * (pMax - pMin + 1)) + pMin;
+          randomDiscounts[i][j] = Array(c).fill(0);
+          for (let dop = 1; dop < c; dop++) {
+            randomDiscounts[i][j][dop] = Number((Math.random() * dMax).toFixed(4));
+          }
+        }
+      }
+      return { prices: randomPrices, discounts: randomDiscounts };
+    },
+    []
+  );
+
+  const calculateRandom = useCallback(() => {
+    const { prices: rp, discounts: rd } = generateRandomData(
+      contracts,
+      tenderers,
+      priceMin,
+      priceMax,
+      discountMax
+    );
+    setPrices(rp);
+    setDiscounts(rd);
+    computeCurrent(
+      rp,
+      rd,
+      contracts,
+      tenderers,
+      useAverageDOP,
+      fastMode,
+      selectedContracts,
+      forced,
+      forbidden,
+      maxWins
+    );
+    pushHistory(
+      {
+        contracts,
+        tenderers,
+        prices: rp,
+        discounts: rd,
+        tendererNames,
+        contractNames,
+        selectedContracts,
+        useAverageDOP,
+        fastMode,
+      },
+      "random"
+    );
+    setHasCalculated(true);
+    setDisplayedCombinations(50);
+  }, [
+    generateRandomData,
+    contracts,
+    tenderers,
+    priceMin,
+    priceMax,
+    discountMax,
+    useAverageDOP,
+    fastMode,
+    selectedContracts,
+    forced,
+    forbidden,
+    maxWins,
+    computeCurrent,
+    pushHistory,
+    tendererNames,
+    contractNames,
+  ]);
+
+  const newCalculation = useCallback(() => {
+    setPrices(
+      Array.from({ length: tenderers }, () => Array(contracts).fill(0))
+    );
+    setDiscounts(
+      Array.from({ length: tenderers }, () =>
+        Array.from({ length: contracts }, () => Array(contracts).fill(0))
+      )
+    );
+    setSelectedContracts([]);
+    setForced([]);
+    setForbidden([]);
+    setMaxWins([]);
     setResults(null);
-    setShowDiscounts(false);
+    setCalcError(null);
+    setIsCalculating(false);
+    setHasCalculated(false);
+    setWhatIf(null);
+    setComparison(null);
     setDisplayedCombinations(50);
   }, [tenderers, contracts]);
 
-  useEffect(() => {
-    initializePricesAndDiscounts();
-  }, [initializePricesAndDiscounts]);
-
-  // --- Handlers for User Inputs ---
-  const handlePriceChange = useCallback((t: number, c: number, value: string) => {
-    const numValue = Number(Number.parseFloat(value).toFixed(2)) || 0;
-    setPrices((prevPrices) =>
-      prevPrices.map((row, rowIndex) =>
-        rowIndex === t
-          ? row.map((cell, colIndex) => (colIndex === c ? numValue : cell))
-          : row
-      )
+  // --- what-if: nudge one tier's discount on a COPY, compute transiently ---
+  const computeWhatIf = useCallback(() => {
+    if (!whatIf) return;
+    const t = whatIf.t;
+    const c = whatIf.c;
+    const tier = whatIf.tier;
+    const d2 = discounts.map((row) => row.map((ladder) => [...ladder]));
+    const ladder = d2[t]?.[c];
+    if (ladder) {
+      const base = ladder[tier] ?? 0;
+      ladder[tier] = Number(Math.max(0, Math.min(100, base + whatIf.deltaPct)).toFixed(2));
+    }
+    const effective =
+      selectedContracts.length > 0 ? selectedContracts : allIndices(contracts);
+    const proj = projectToSelectedContracts(prices, d2, effective, forced, forbidden);
+    compute(
+      proj.prices,
+      proj.discounts,
+      proj.cCount,
+      tenderers,
+      useAverageDOP,
+      {
+        fastMode,
+        forced: proj.forced,
+        forbidden: proj.forbidden,
+        maxWins,
+      },
+      scenarioKey(prices, d2, contracts, tenderers, useAverageDOP, fastMode, selectedContracts, forced, forbidden, maxWins)
     );
-  }, []);
+  }, [
+    whatIf,
+    discounts,
+    prices,
+    selectedContracts,
+    contracts,
+    tenderers,
+    useAverageDOP,
+    fastMode,
+    forced,
+    forbidden,
+    maxWins,
+    compute,
+  ]);
+
+  // --- auto-recompute (debounced, only once the user has calculated) ---
+  useEffect(() => {
+    if (!hasCalculated) return;
+    const timer = setTimeout(() => {
+      const key = scenarioKey(
+        prices,
+        discounts,
+        contracts,
+        tenderers,
+        useAverageDOP,
+        fastMode,
+        selectedContracts,
+        forced,
+        forbidden,
+        maxWins
+      );
+      if (key === lastInputKeyRef.current) return;
+      if (whatIf) {
+        computeWhatIf();
+      } else {
+        computeCurrent(
+          prices,
+          discounts,
+          contracts,
+          tenderers,
+          useAverageDOP,
+          fastMode,
+          selectedContracts,
+          forced,
+          forbidden,
+          maxWins
+        );
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [
+    hasCalculated,
+    prices,
+    discounts,
+    contracts,
+    tenderers,
+    useAverageDOP,
+    fastMode,
+    selectedContracts,
+    forced,
+    forbidden,
+    maxWins,
+    whatIf,
+    computeWhatIf,
+    computeCurrent,
+  ]);
+
+  // --- grid handlers ---
+  const handlePriceChange = useCallback(
+    (t: number, c: number, value: string) => {
+      const numValue = parseMoney(value);
+      setPrices((prev) =>
+        prev.map((row, rowIndex) =>
+          rowIndex === t
+            ? row.map((cell, colIndex) => (colIndex === c ? numValue : cell))
+            : row
+        )
+      );
+    },
+    []
+  );
 
   const handleDiscountChange = useCallback(
     (t: number, c: number, dop: number, value: string) => {
-      const numValue = Number(Number.parseFloat(value).toFixed(2)) || 0;
-      setDiscounts((prevDiscounts) =>
-        prevDiscounts.map((tenderDiscounts, tenderIndex) =>
+      const numValue = parseMoney(value);
+      setDiscounts((prev) =>
+        prev.map((tenderDiscounts, tenderIndex) =>
           tenderIndex === t
             ? tenderDiscounts.map((contractDops, contractIndex) =>
                 contractIndex === c
@@ -94,106 +755,222 @@ export const useAllianceCombinations = () => {
             : tenderDiscounts
         )
       );
-    }, []);
+    },
+    []
+  );
 
-  // --- Mock Generation Utility ---
-  const generateRandomData = (
-    cCount: number,
-    tCount: number,
-    pMin: number,
-    pMax: number,
-    dMax: number
-  ) => {
-    const randomPrices: number[][] = [];
-    const randomDiscounts: number[][][] = [];
+  // --- tab switching (no grid wipe anymore) ---
+  const handleTabChange = useCallback((val: string) => {
+    setActiveTab(val as "manual" | "random");
+  }, []);
 
-    for (let i = 0; i < tCount; i++) {
-      randomPrices[i] = [];
-      randomDiscounts[i] = [];
-      for (let j = 0; j < cCount; j++) {
-        randomPrices[i][j] = Math.floor(Math.random() * (pMax - pMin + 1)) + pMin;
-        randomDiscounts[i][j] = Array(cCount).fill(0);
-        for (let dop = 1; dop < cCount; dop++) {
-          randomDiscounts[i][j][dop] = Number((Math.random() * dMax).toFixed(4));
-        }
-      }
-    }
-    return { prices: randomPrices, discounts: randomDiscounts };
-  };
+  // --- history ---
+  const loadHistoryItem = useCallback(
+    (id: string) => {
+      const item = history.find((h) => h.id === id);
+      if (!item) return;
+      const s = item.snapshot;
+      if (!s || typeof s.contracts !== "number" || typeof s.tenderers !== "number") return;
+      setContracts(s.contracts);
+      setTenderers(s.tenderers);
+      setPrices(s.prices);
+      setDiscounts(s.discounts);
+      setTendererNames(s.tendererNames);
+      setContractNames(s.contractNames);
+      setSelectedContracts(s.selectedContracts ?? []);
+      setUseAverageDOP(s.useAverageDOP);
+      setFastMode(s.fastMode ?? false);
+      setForced([]);
+      setForbidden([]);
+      setMaxWins([]);
+      setWhatIf(null);
+      computeCurrent(
+        s.prices,
+        s.discounts,
+        s.contracts,
+        s.tenderers,
+        s.useAverageDOP,
+        s.fastMode ?? false,
+        s.selectedContracts ?? [],
+        [],
+        [],
+        []
+      );
+      setHasCalculated(true);
+    },
+    [history, computeCurrent]
+  );
 
-  // --- Core Analytical Calculation Processing Engine ---
-  // Pure implementation lives in src/lib/alliance-combinations.ts (unit-tested).
-  const generateResults = useCallback(
-    (currentPrices: number[][], currentDiscounts: number[][][], cCount: number, tCount: number, avgDop = false): Results =>
-      computeAllianceResults(currentPrices, currentDiscounts, cCount, tCount, avgDop), []);
+  const deleteHistoryItem = useCallback((id: string) => {
+    setHistory((prev) => {
+      const next = prev.filter((h) => h.id !== id);
+      writeJson(HISTORY_KEY, next);
+      return next;
+    });
+  }, []);
 
-  // --- Operational Trigger Hooks ---
-  const calculateResults = () => {
-    const calculated = generateResults(prices, discounts, contracts, tenderers, useAverageDOP);
-    setResults(calculated);
-    setDisplayedCombinations(50);
-  };
+  const renameHistoryItem = useCallback((id: string, name: string) => {
+    setHistory((prev) => {
+      const next = prev.map((h) => (h.id === id ? { ...h, name } : h));
+      writeJson(HISTORY_KEY, next);
+      return next;
+    });
+  }, []);
 
-  const calculateRandomResults = () => {
-    const { prices: rPrices, discounts: rDiscounts } = generateRandomData(
-      contracts,
-      tenderers,
-      priceMin,
-      priceMax,
-      discountMax
-    );
-    setPrices(rPrices);
-    setDiscounts(rDiscounts);
-    const calculated = generateResults(rPrices, rDiscounts, contracts, tenderers, useAverageDOP);
-    setResults(calculated);
-    setDisplayedCombinations(50);
-  };
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+    writeJson(HISTORY_KEY, []);
+  }, []);
 
-  const formatCurrency = (value: number | undefined | null, abbreviated = false) => {
-    if (value === null || value === undefined) return "$0.00";
-    if (abbreviated) {
-      if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
-      if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
-      if (value >= 1e3) return `$${(value / 1e3).toFixed(2)}K`;
-    }
-    return `$${value.toLocaleString()}`;
-  };
+  // --- scenarios (named snapshots for comparison) ---
+  const saveScenario = useCallback(
+    (name: string) => {
+      const scenario: Scenario = {
+        id: makeId("s"),
+        name,
+        savedAt: Date.now(),
+        snapshot: makeSnapshot(prices, discounts),
+        bestTotal: results?.bestCombo?.total ?? null,
+      };
+      setScenarios((prev) => {
+        const next = [...prev, scenario];
+        writeJson(SCENARIOS_KEY, next);
+        return next;
+      });
+    },
+    [prices, discounts, results, makeSnapshot]
+  );
 
-  useEffect(() => {
-    if (isLoadingFromHistory && prices.length > 0 && discounts.length > 0) {
-      calculateResults();
-      setIsLoadingFromHistory(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoadingFromHistory, prices, discounts]);
+  const deleteScenario = useCallback((id: string) => {
+    setScenarios((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      writeJson(SCENARIOS_KEY, next);
+      return next;
+    });
+  }, []);
+
+  const loadScenario = useCallback(
+    (id: string) => {
+      const s = scenarios.find((x) => x.id === id);
+      if (!s) return;
+      const snap = s.snapshot;
+      if (!snap || typeof snap.contracts !== "number" || typeof snap.tenderers !== "number") return;
+      setContracts(snap.contracts);
+      setTenderers(snap.tenderers);
+      setPrices(snap.prices);
+      setDiscounts(snap.discounts);
+      setTendererNames(snap.tendererNames);
+      setContractNames(snap.contractNames);
+      setSelectedContracts(snap.selectedContracts ?? []);
+      setUseAverageDOP(snap.useAverageDOP);
+      setFastMode(snap.fastMode ?? false);
+      setForced([]);
+      setForbidden([]);
+      setMaxWins([]);
+      setWhatIf(null);
+      computeCurrent(
+        snap.prices,
+        snap.discounts,
+        snap.contracts,
+        snap.tenderers,
+        snap.useAverageDOP,
+        snap.fastMode ?? false,
+        snap.selectedContracts ?? [],
+        [],
+        [],
+        []
+      );
+      setHasCalculated(true);
+    },
+    [scenarios, computeCurrent]
+  );
+
+  // Comparison baseline: snapshot the current results for side-by-side view.
+  const setComparisonSnapshot = useCallback(() => {
+    setComparison(results);
+  }, [results]);
+
+  // --- display ---
+  const formatCurrency = useCallback(
+    (value: number | null | undefined, abbreviated = false) =>
+      formatMoney(value, { abbreviated }),
+    []
+  );
+
+  const loadMoreCombinations = useCallback(
+    () => setDisplayedCombinations((prev) => prev + 50),
+    []
+  );
 
   return {
-    contracts, setContracts,
-    tenderers, setTenderers,
-    useAverageDOP, setUseAverageDOP,
-    prices, setPrices,
-    discounts, setDiscounts,
-    results,
-    showDiscounts, setShowDiscounts,
-    activeTab,
-    handleTabChange: (val: string) => {
-      setActiveTab(val as "manual" | "random");
-      if (val === "manual") initializePricesAndDiscounts();
-    },
-    priceMin, setPriceMin,
-    priceMax, setPriceMax,
-    discountMax, setDiscountMax,
-    displayedCombinations,
+    // dimensions & grid
+    contracts,
+    setContracts,
+    tenderers,
+    setTenderers,
+    prices,
+    setPrices,
+    discounts,
+    setDiscounts,
+    tendererNames,
+    setTendererNames,
+    contractNames,
+    setContractNames,
+    selectedContracts,
+    setSelectedContracts,
     handlePriceChange,
     handleDiscountChange,
-    calculateResults,
-    calculateRandomResults,
+    // settings
+    useAverageDOP,
+    setUseAverageDOP,
+    fastMode,
+    setFastMode,
+    priceMin,
+    setPriceMin,
+    priceMax,
+    setPriceMax,
+    discountMax,
+    setDiscountMax,
+    showDiscounts,
+    setShowDiscounts,
+    activeTab,
+    handleTabChange,
+    // constraints
+    forced,
+    setForced,
+    forbidden,
+    setForbidden,
+    maxWins,
+    setMaxWins,
+    // results
+    results,
+    isCalculating,
+    calcError,
+    hasCalculated,
+    displayedCombinations,
+    loadMoreCombinations,
+    // actions
+    calculate,
+    calculateRandom,
+    newCalculation,
+    computeWhatIf,
+    // what-if / comparison / scenarios
+    whatIf,
+    setWhatIf,
+    comparison,
+    setComparison,
+    setComparisonSnapshot,
+    scenarios,
+    saveScenario,
+    deleteScenario,
+    loadScenario,
+    // history
+    history,
+    loadHistoryItem,
+    deleteHistoryItem,
+    renameHistoryItem,
+    clearHistory,
+    // formatting
     formatCurrency,
-    safeArrayReduce: (arr: number[] | undefined, initialValue: number) =>
-      !arr || !Array.isArray(arr)
-        ? initialValue
-        : arr.reduce((sum, val) => sum + (val || 0), initialValue),
-    loadMoreCombinations: () => setDisplayedCombinations((prev) => prev + 50),
-    isLoadingFromHistory, setIsLoadingFromHistory,
   };
 };
