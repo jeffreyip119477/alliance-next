@@ -87,6 +87,7 @@ export function PriceGrid({
                           value={row[c] ?? 0}
                           onChange={(v) => onPriceChange(t, c, v)}
                           disabled={!isSelected(c)}
+                          placeholder=""
                           className="w-28"
                           ariaLabel={`Price for ${tendererNames[t] || `T${t + 1}`} on ${contractNames[c] || `C${c + 1}`}`}
                         />

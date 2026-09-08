@@ -7,14 +7,15 @@ higher price.
 
 The calculator supports manual and random input, contract selection, tenderer
 constraints, calculation history, what-if analysis, showcase data, dark mode,
-and PDF reporting. Calculator-specific code lives under
+and PDF reporting. Average-DoP mode is enabled for new manual calculations.
+Calculator-specific code lives under
 `src/features/alliance-calculator`; shared UI primitives remain under
 `src/components/ui`.
 
 For large grids (up to 10 contracts × 20 tenderers), the calculator uses an
 exact subset dynamic-programming solver to find the best compliant award. It
 does not materialize every assignment in that case; the result explains when
-the strategy explorer has been capped. Average-DoP mode is disabled for new
+the strategy explorer has been capped. Average-DoP mode is enabled for new
 manual calculations.
 
 ## Getting Started

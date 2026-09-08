@@ -109,6 +109,7 @@ export function DiscountGrid({
                             max={100}
                             disabled={disabled}
                             onChange={(v) => onDiscountChange(t, c, dopIndex, v)}
+                            placeholder=""
                             className="w-20"
                             ariaLabel={`Discount DoP ${dopIndex + 1} for ${tendererNames[t] || `T${t + 1}`} on ${contractNames[c] || `C${c + 1}`}`}
                           />

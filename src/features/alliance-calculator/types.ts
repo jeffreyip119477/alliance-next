@@ -35,7 +35,10 @@ export interface WhatIf {
   applied?: boolean;
 }
 
-export type Draft = Snapshot;
+export type Draft = Snapshot & {
+  /** Versioned so changes to startup defaults can migrate saved drafts. */
+  draftVersion?: number;
+};
 
 export interface ResultsView {
   results: Results;

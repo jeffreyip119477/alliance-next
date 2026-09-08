@@ -35,23 +35,55 @@ import { HISTORY_LIMIT } from "../constants";
 
 export type { HistoryItem, Snapshot, WhatIf, WhatIfChange } from "../types";
 
+const DEFAULT_CONTRACTS = 6;
+const DEFAULT_TENDERERS = 5;
+const CURRENT_DRAFT_VERSION = 2;
+
+const createDefaultTendererNames = (tenderers: number): string[] =>
+  Array.from({ length: tenderers }, (_, i) => `Tenderer ${i + 1}`);
+
+const migrateTendererNames = (names: string[], tenderers: number): string[] =>
+  names.length === tenderers &&
+  names.every((name, i) => name === `Tender ${i + 1}`)
+    ? createDefaultTendererNames(tenderers)
+    : names;
+
+const createBlankPrices = (tenderers: number, contracts: number): number[][] =>
+  Array.from({ length: tenderers }, () => Array(contracts).fill(0));
+
+const createBlankDiscounts = (
+  tenderers: number,
+  contracts: number
+): number[][][] =>
+  Array.from({ length: tenderers }, () =>
+    Array.from({ length: contracts }, () => Array(contracts).fill(0))
+  );
+
 export const useAllianceCombinations = () => {
-  // Start with a complete, deterministic scenario so a fresh install is
-  // immediately useful. A saved draft (restored below) still takes priority.
-  const [initialShowcase] = useState(cloneShowcaseDataset);
+  // Start with an empty scenario. A saved draft (restored below) still takes
+  // priority, and the built-in showcase remains available as an explicit
+  // action from the header.
 
   // --- dimensions & grid ---
-  const [contracts, setContracts] = useState(initialShowcase.contracts);
-  const [tenderers, setTenderers] = useState(initialShowcase.tenderers);
-  const [prices, setPrices] = useState<number[][]>(initialShowcase.prices);
-  const [discounts, setDiscounts] = useState<number[][][]>(initialShowcase.discounts);
-  const [tendererNames, setTendererNames] = useState<string[]>(initialShowcase.tendererNames);
-  const [contractNames, setContractNames] = useState<string[]>(initialShowcase.contractNames);
+  const [contracts, setContracts] = useState(DEFAULT_CONTRACTS);
+  const [tenderers, setTenderers] = useState(DEFAULT_TENDERERS);
+  const [prices, setPrices] = useState<number[][]>(() =>
+    createBlankPrices(DEFAULT_TENDERERS, DEFAULT_CONTRACTS)
+  );
+  const [discounts, setDiscounts] = useState<number[][][]>(() =>
+    createBlankDiscounts(DEFAULT_TENDERERS, DEFAULT_CONTRACTS)
+  );
+  const [tendererNames, setTendererNames] = useState<string[]>(() =>
+    createDefaultTendererNames(DEFAULT_TENDERERS)
+  );
+  const [contractNames, setContractNames] = useState<string[]>(() =>
+    Array.from({ length: DEFAULT_CONTRACTS }, (_, i) => `Contract ${i + 1}`)
+  );
   const [selectedContracts, setSelectedContracts] = useState<number[]>([]);
 
   // --- settings ---
-  // A new manual calculation starts with Average-DoP mode disabled.
-  const [useAverageDOP, setUseAverageDOP] = useState(false);
+  // A new manual calculation starts with Average-DoP mode enabled.
+  const [useAverageDOP, setUseAverageDOP] = useState(true);
   const [fastMode, setFastMode] = useState(false);
   const [priceMin, setPriceMin] = useState(450000);
   const [priceMax, setPriceMax] = useState(500000);
@@ -137,7 +169,7 @@ export const useAllianceCombinations = () => {
     setTendererNames((prev) =>
       prev.length === tenderers
         ? prev
-        : Array.from({ length: tenderers }, (_, i) => `Tenderer ${i + 1}`)
+        : createDefaultTendererNames(tenderers)
     );
     setContractNames((prev) =>
       prev.length === contracts
@@ -172,10 +204,14 @@ export const useAllianceCombinations = () => {
       setTenderers(draft.tenderers);
       setPrices(draft.prices);
       setDiscounts(draft.discounts);
-       setUseAverageDOP(draft.useAverageDOP ?? false);
+      // Drafts created before the default changed did not have a version and
+      // stored false automatically, so migrate those to the new default.
+      setUseAverageDOP(
+        draft.draftVersion === undefined ? true : (draft.useAverageDOP ?? true)
+      );
       setFastMode(draft.fastMode ?? false);
       if (Array.isArray(draft.tendererNames) && draft.tendererNames.length === draft.tenderers) {
-        setTendererNames(draft.tendererNames);
+        setTendererNames(migrateTendererNames(draft.tendererNames, draft.tenderers));
       }
       if (Array.isArray(draft.contractNames) && draft.contractNames.length === draft.contracts) {
         setContractNames(draft.contractNames);
@@ -197,6 +233,7 @@ export const useAllianceCombinations = () => {
     if (typeof window === "undefined") return;
     const timer = setTimeout(() => {
       const draft: Draft = {
+        draftVersion: CURRENT_DRAFT_VERSION,
         contracts,
         tenderers,
         prices,
@@ -370,6 +407,7 @@ export const useAllianceCombinations = () => {
       )
     );
     setSelectedContracts([]);
+    setUseAverageDOP(true);
     setForced([]);
     setForbidden([]);
     setMaxWins([]);

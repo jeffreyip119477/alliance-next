@@ -1,6 +1,6 @@
 /**
- * A deterministic, realistic dataset used on a fresh install so the
- * calculator immediately demonstrates the full workflow.
+ * A deterministic, realistic dataset loaded by the optional Showcase action
+ * so the calculator can demonstrate the full workflow on demand.
  *
  * The scenario is intentionally different from the worked example in the
  * supplied reference image: it has six work packages and five tenderers.
