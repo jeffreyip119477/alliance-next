@@ -598,11 +598,6 @@ export function WhatIfCard({
   const select =
     "h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-  const update = (patch: Partial<WhatIf>) => {
-    const base: WhatIfChange = whatIf?.changes[0] ?? { t: 0, c: bidableContracts[0] ?? 0, tier: 0, deltaPct: 0 };
-    setWhatIf({ changes: [{ ...base, ...patch }, ...(whatIf?.changes.slice(1) ?? [])], applied: false });
-  };
-
   const changes = whatIf?.changes ?? [];
   const addChange = () => setWhatIf({ changes: [...changes, { t: 0, c: bidableContracts[0] ?? 0, tier: 0, deltaPct: 0 }], applied: false });
   const updateChange = (index: number, patch: Partial<WhatIfChange>) => setWhatIf({ changes: changes.map((change, i) => i === index ? { ...change, ...patch } : change), applied: false });

@@ -217,7 +217,7 @@ console.log("constraints");
 
   const forbidden = Array.from({ length: 5 }, (_, t) => Array.from({ length: 5 }, (_, c) => t === 3 && c === 0));
   const r2 = generateResults(P5, D5, 5, 5, false, { forbidden });
-  check("forbid D on C0 -> only 366 remains", r2.totalCombos === 1 && r2.bestCombo?.total === 366);
+  check("forbid D on C0 -> best remains 366 and no result uses D/C0", r2.totalCombos === 2 && r2.bestCombo?.total === 366 && r2.combinations.every((c) => c.assignment[0] !== 3));
 
   const r3 = generateResults(P5, D5, 5, 5, false, { maxWins: [2, 5, 5, 5, 5] });
   check("maxWins A=2 -> best 426, A capped", r3.bestCombo?.total === 426 && r3.combinations.every((c) => c.tendererCounts[0] <= 2));

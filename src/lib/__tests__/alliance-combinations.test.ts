@@ -270,12 +270,14 @@ describe("constraints: forced / forbidden / maxWins", () => {
   });
 
   it("forbidding a cell removes every combo that used it", () => {
-    // Forbid D from C0: kills D,D,D,B,B ($426); the A combo survives.
+    // Forbid D from C0: kills D,D,D,B,B ($426). A second valid split where D
+    // wins only C1/C2 remains, so every surviving assignment must avoid D/C0.
     const forbidden = Array.from({ length: 5 }, (_, t) =>
       Array.from({ length: 5 }, (_, c) => t === 3 && c === 0)
     );
     const res = generateResults(P5, D5, 5, 5, false, { forbidden });
-    expect(res.totalCombos).toBe(1);
+    expect(res.totalCombos).toBe(2);
+    expect(res.combinations.every((c) => c.assignment[0] !== 3)).toBe(true);
     expect(res.bestCombo?.total).toBe(366);
   });
 

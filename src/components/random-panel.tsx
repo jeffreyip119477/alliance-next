@@ -171,6 +171,20 @@ export function RandomPanel({
           <Label htmlFor="random-averageDOP">
             Use Average Discount per DoP Across Contracts
           </Label>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-xs text-muted-foreground">
+                  (average DoP prices each contract at the tenderer&rsquo;s
+                  mean discount across the contracts it bids)
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                Average DoP mode prices every contract a tenderer bids at
+                its average discount percentage.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
 
         <div className="flex items-center space-x-2">
@@ -183,10 +197,15 @@ export function RandomPanel({
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="cursor-help text-xs text-muted-foreground">(learn more)</span>
+                <span className="text-xs text-muted-foreground">
+                  (keeps the search under control on big grids)
+                </span>
               </TooltipTrigger>
               <TooltipContent>
-                Prunes branches that cannot improve the best result found so far and keeps only tied-optimal configurations.
+                Fast mode prunes the search as soon as a configuration
+                can no longer beat the best found so far. The explorer
+                then lists only the tied-optimal configurations;
+                best total and saving are unchanged.
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

@@ -93,6 +93,7 @@ export default function AllianceCombinationsCalculator() {
     loadMoreCombinations,
     calculate,
     calculateRandom,
+    loadShowcaseData,
     newCalculation,
     computeWhatIf,
     whatIf,
@@ -214,6 +215,9 @@ export default function AllianceCombinationsCalculator() {
                 </Button>
               </>
             )}
+            <Button variant="outline" onClick={loadShowcaseData} title="Load and calculate the built-in six-contract showcase">
+              <Database className="h-4 w-4" /> Showcase
+            </Button>
             <Button variant="outline" onClick={newCalculation}>
               <Plus className="h-4 w-4" /> New
             </Button>

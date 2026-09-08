@@ -25,6 +25,7 @@ import {
   formatMoney,
   parseMoney,
 } from "@/lib/currency";
+import { cloneShowcaseDataset } from "@/lib/showcase-data";
 
 export interface Snapshot {
   contracts: number;
@@ -81,6 +82,10 @@ const HISTORY_KEY = "alliance-calculator-history";
 const DRAFT_KEY = "alliance-calculator-draft";
 const SCENARIOS_KEY = "alliance-calculator-scenarios";
 const HISTORY_LIMIT = 50;
+// A worker normally completes the showcase scenario in a few milliseconds.
+// This guard prevents a failed worker (which otherwise leaves the UI spinning
+// forever) from blocking the user indefinitely on unusually large scenarios.
+const WORKER_TIMEOUT_MS = 15000;
 
 const allIndices = (n: number): number[] => Array.from({ length: n }, (_, i) => i);
 
@@ -205,17 +210,21 @@ const scenarioKey = (
 };
 
 export const useAllianceCombinations = () => {
+  // Start with a complete, deterministic scenario so a fresh install is
+  // immediately useful. A saved draft (restored below) still takes priority.
+  const [initialShowcase] = useState(cloneShowcaseDataset);
+
   // --- dimensions & grid ---
-  const [contracts, setContracts] = useState(2);
-  const [tenderers, setTenderers] = useState(2);
-  const [prices, setPrices] = useState<number[][]>([]);
-  const [discounts, setDiscounts] = useState<number[][][]>([]);
-  const [tendererNames, setTendererNames] = useState<string[]>([]);
-  const [contractNames, setContractNames] = useState<string[]>([]);
+  const [contracts, setContracts] = useState(initialShowcase.contracts);
+  const [tenderers, setTenderers] = useState(initialShowcase.tenderers);
+  const [prices, setPrices] = useState<number[][]>(initialShowcase.prices);
+  const [discounts, setDiscounts] = useState<number[][][]>(initialShowcase.discounts);
+  const [tendererNames, setTendererNames] = useState<string[]>(initialShowcase.tendererNames);
+  const [contractNames, setContractNames] = useState<string[]>(initialShowcase.contractNames);
   const [selectedContracts, setSelectedContracts] = useState<number[]>([]);
 
   // --- settings ---
-  const [useAverageDOP, setUseAverageDOP] = useState(true);
+  const [useAverageDOP, setUseAverageDOP] = useState(initialShowcase.useAverageDOP);
   const [fastMode, setFastMode] = useState(false);
   const [priceMin, setPriceMin] = useState(450000);
   const [priceMax, setPriceMax] = useState(500000);
@@ -277,8 +286,21 @@ export const useAllianceCombinations = () => {
       setIsCalculating(true);
       setCalcError(null);
 
+      const worker = workerRef.current;
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+
+      const clearTimeoutGuard = () => {
+        if (timeout !== null) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+      };
+
       const settle = (resp: CalcResponse) => {
-        if (resp.id !== id) return; // stale response — ignore
+        if (settled || resp.id !== id || id !== requestSeq.current) return; // stale response — ignore
+        settled = true;
+        clearTimeoutGuard();
         setIsCalculating(false);
         if ("error" in resp) {
           setCalcError(resp.error);
@@ -288,27 +310,38 @@ export const useAllianceCombinations = () => {
         setResults(resp.results);
       };
 
-      const worker = workerRef.current;
-      if (!worker) {
-        // SSR or worker unavailable: synchronous fallback (identical output).
+      const runSyncFallback = () => {
+        if (settled || id !== requestSeq.current) return;
+        settled = true;
+        clearTimeoutGuard();
+        if (worker && workerRef.current === worker) {
+          worker.terminate();
+          workerRef.current = null;
+        }
+
+        // SSR, worker startup failure, or a timed-out worker: synchronous
+        // fallback is identical to the worker calculation and guarantees the
+        // UI cannot remain in a permanent loading state.
         try {
           const r = generateResults(p, d, cCount, tCount, avgDop, options);
-          if (id === requestSeq.current) {
-            setResults(r);
-            setCalcError(null);
-            setIsCalculating(false);
-          }
+          setResults(r);
+          setCalcError(null);
+          setIsCalculating(false);
         } catch (err) {
-          if (id === requestSeq.current) {
-            setCalcError(err instanceof Error ? err.message : String(err));
-            setResults(null);
-            setIsCalculating(false);
-          }
+          setCalcError(err instanceof Error ? err.message : String(err));
+          setResults(null);
+          setIsCalculating(false);
         }
+      };
+
+      if (!worker) {
+        runSyncFallback();
         return;
       }
 
       worker.onmessage = (event: MessageEvent<CalcResponse>) => settle(event.data);
+      worker.onerror = () => runSyncFallback();
+      worker.onmessageerror = () => runSyncFallback();
       const req: CalcRequest = {
         id,
         prices: p,
@@ -318,7 +351,12 @@ export const useAllianceCombinations = () => {
         avgDop,
         options,
       };
-      worker.postMessage(req);
+      try {
+        worker.postMessage(req);
+        timeout = setTimeout(runSyncFallback, WORKER_TIMEOUT_MS);
+      } catch {
+        runSyncFallback();
+      }
     },
     []
   );
@@ -631,6 +669,39 @@ export const useAllianceCombinations = () => {
     setComparison(null);
     setDisplayedCombinations(50);
   }, [tenderers, contracts]);
+
+  /** Restore the built-in showcase and calculate it immediately. */
+  const loadShowcaseData = useCallback(() => {
+    const showcase = cloneShowcaseDataset();
+    setContracts(showcase.contracts);
+    setTenderers(showcase.tenderers);
+    setPrices(showcase.prices);
+    setDiscounts(showcase.discounts);
+    setTendererNames(showcase.tendererNames);
+    setContractNames(showcase.contractNames);
+    setSelectedContracts([]);
+    setUseAverageDOP(showcase.useAverageDOP);
+    setFastMode(false);
+    setForced([]);
+    setForbidden([]);
+    setMaxWins([]);
+    setWhatIf(null);
+    setComparison(null);
+    setDisplayedCombinations(50);
+    computeCurrent(
+      showcase.prices,
+      showcase.discounts,
+      showcase.contracts,
+      showcase.tenderers,
+      showcase.useAverageDOP,
+      false,
+      [],
+      [],
+      [],
+      []
+    );
+    setHasCalculated(true);
+  }, [computeCurrent]);
 
   // --- what-if: nudge one tier's discount on a COPY, compute transiently ---
   const computeWhatIf = useCallback(() => {
@@ -959,6 +1030,7 @@ export const useAllianceCombinations = () => {
     // actions
     calculate,
     calculateRandom,
+    loadShowcaseData,
     newCalculation,
     computeWhatIf,
     // what-if / comparison / scenarios
