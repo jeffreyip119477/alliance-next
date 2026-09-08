@@ -267,7 +267,7 @@ export default function AllianceCombinationsCalculator() {
           <div>
             <h1 className="text-2xl font-bold">Alliance Combinations Calculator</h1>
             <p className="text-sm text-muted-foreground">
-              v4.0.0 — worker-backed, offline-friendly
+              v4.0.0
             </p>
           </div>
           <div className="flex items-center gap-2">
