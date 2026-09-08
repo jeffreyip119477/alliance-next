@@ -109,8 +109,6 @@ export function SummaryCard({
   const [showLegend, setShowLegend] = useState(true);
   const { results, format, showAbbreviated } = view;
   const infeasible = results.status === "infeasible";
-  const awardedContracts = results.bestCombo?.assignment.filter((t) => t >= 0).length ?? 0;
-  const suppliersUsed = results.bestCombo?.tendererCounts.filter((count) => count > 0).length ?? 0;
   const savingRate = results.totalLowestBase > 0 && !infeasible
     ? (results.costSaving / results.totalLowestBase) * 100
     : 0;
@@ -190,7 +188,9 @@ export function SummaryCard({
           <div className="rounded-lg border bg-[#00B2CA]/10 p-4 shadow-sm dark:bg-[#00B2CA]/20">
             <div className="text-sm text-muted-foreground dark:text-gray-400">Cost Saving</div>
             <div className="text-2xl font-bold text-[#00B2CA]">
-              {infeasible ? "—" : format(results.costSaving, showAbbreviated)}
+              {infeasible
+                ? "—"
+                : `${format(results.costSaving, showAbbreviated)} (${savingRate.toFixed(1)}% saving)`}
             </div>
           </div>
         </div>
@@ -200,15 +200,6 @@ export function SummaryCard({
             <span>No compliant award was found. No saving is reported until every selected contract can be awarded within the original lowest-base ceiling.</span>
           </div>
         )}
-        {!infeasible && results.bestCombo && (
-          <div className="mt-4 grid gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs sm:grid-cols-4">
-            <span><strong>Coverage:</strong> {awardedContracts}/{view.selectedContracts.length || view.contracts} contracts</span>
-            <span><strong>Suppliers used:</strong> {suppliersUsed}</span>
-            <span><strong>Saving rate:</strong> {savingRate.toFixed(1)}%</span>
-            <span><strong>Search:</strong> {results.combinationsTruncated ? "Exact best award" : `${results.stats.leavesEvaluated.toLocaleString()} leaves`}</span>
-          </div>
-        )}
-
       </CardContent>
     </Card>
   );

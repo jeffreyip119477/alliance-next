@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent } from "react";
+import { useState } from "react";
 import {
   Tabs,
   TabsContent,
@@ -42,8 +42,6 @@ import {
   Calculator,
   Database,
   Settings,
-  Download,
-  Upload,
   Plus,
   Loader2,
   History as HistoryIcon,
@@ -51,7 +49,6 @@ import {
   FileText,
 } from "lucide-react";
 import { useAllianceCombinations } from "../hooks/useAllianceCombinations";
-import { gridToCsv, parseCsvToGrid } from "@/lib/csv";
 import { downloadResultsPdf } from "@/lib/pdf";
 import { PriceGrid } from "./price-grid";
 import { DiscountGrid } from "./discount-grid";
@@ -124,9 +121,7 @@ export default function AllianceCombinationsCalculator() {
 
   const [showAbbreviatedAmounts, setShowAbbreviatedAmounts] = useState(false);
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
-  const [csvError, setCsvError] = useState<string | null>(null);
   const [pdfError, setPdfError] = useState<string | null>(null);
-  const csvInputRef = useRef<HTMLInputElement>(null);
   const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
   const [reportHeading, setReportHeading] = useState("Alliance decision summary");
 
@@ -138,51 +133,7 @@ export default function AllianceCombinationsCalculator() {
     onClear: clearHistory,
   };
 
-  /* ---------- data I/O ---------- */
-
-  const handleCsvExport = () => {
-    const csv = gridToCsv({
-      contracts,
-      tenderers,
-      prices,
-      discounts,
-      tendererNames,
-      contractNames,
-    });
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "alliance-grid.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleCsvImport = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    try {
-      const grid = parseCsvToGrid(await file.text());
-      if (grid.contracts < 1 || grid.contracts > 10 || grid.tenderers < 1 || grid.tenderers > 20) {
-        throw new Error("The imported grid must contain 1–10 contracts and 1–20 tenderers.");
-      }
-      newCalculation();
-      setContracts(grid.contracts);
-      setTenderers(grid.tenderers);
-      setPrices(grid.prices);
-      setDiscounts(grid.discounts);
-      setTendererNames(grid.tendererNames ?? Array.from({ length: grid.tenderers }, (_, i) => `Tenderer ${i + 1}`));
-      setContractNames(grid.contractNames ?? Array.from({ length: grid.contracts }, (_, i) => `Contract ${i + 1}`));
-      setSelectedContracts([]);
-      setForced([]);
-      setForbidden([]);
-      setMaxWins([]);
-      setCsvError(null);
-    } catch (error) {
-      setCsvError(error instanceof Error ? error.message : String(error));
-    }
-  };
+  /* ---------- report export ---------- */
 
   const handlePdfExport = () => {
     if (!results) return;
@@ -276,15 +227,8 @@ export default function AllianceCombinationsCalculator() {
                 <Button variant="outline" onClick={handlePdfExport}>
                   <FileText className="h-4 w-4" /> Export PDF
                 </Button>
-                <Button variant="outline" onClick={handleCsvExport}>
-                  <Download className="h-4 w-4" /> Grid CSV
-                </Button>
               </>
             )}
-            <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvImport} />
-            <Button variant="outline" onClick={() => csvInputRef.current?.click()}>
-              <Upload className="h-4 w-4" /> Import CSV
-            </Button>
             <Button variant="outline" onClick={loadShowcaseData} title="Load and calculate the built-in six-contract showcase">
               <Database className="h-4 w-4" /> Showcase
             </Button>
@@ -309,13 +253,6 @@ export default function AllianceCombinationsCalculator() {
             <AlertTriangle className="h-4 w-4 text-red-500" />
             <AlertTitle>Calculation failed</AlertTitle>
             <AlertDescription>{calcError}</AlertDescription>
-          </Alert>
-        )}
-        {csvError && (
-          <Alert className="mb-6 border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950">
-            <AlertTriangle className="h-4 w-4 text-red-500" />
-            <AlertTitle>CSV import failed</AlertTitle>
-            <AlertDescription>{csvError}</AlertDescription>
           </Alert>
         )}
         {pdfError && (
@@ -476,7 +413,7 @@ export default function AllianceCombinationsCalculator() {
                 <CardTitle>Names</CardTitle>
                 <CardDescription>
                   Give tenderers and contracts meaningful names — they appear in
-                  the results, CSV and PDF exports.
+                  the results and PDF export.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
