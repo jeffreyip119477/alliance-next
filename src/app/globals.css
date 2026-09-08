@@ -116,9 +116,57 @@
   * {
     @apply border-border outline-ring/50;
   }
+
+  /* Native select menus do not always inherit the page theme. Explicitly
+     style their options so dark-mode text stays readable in the popup. */
+  select option {
+    color: var(--foreground);
+    background-color: var(--background);
+  }
+
+  .dark select {
+    color-scheme: dark;
+  }
+
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Keep horizontally scrollable card content compact and theme-aware instead
+   of exposing the browser's large default scrollbar (including arrow buttons
+   on some platforms). This applies to every table/card wrapper that uses the
+   shared `overflow-x-auto` utility, as well as the reusable Table component. */
+.overflow-x-auto,
+[data-slot="table-container"] {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--foreground) 38%, transparent)
+    transparent;
+  overscroll-behavior-inline: contain;
+}
+
+.overflow-x-auto::-webkit-scrollbar,
+[data-slot="table-container"]::-webkit-scrollbar {
+  width: 0.55rem;
+  height: 0.55rem;
+}
+
+.overflow-x-auto::-webkit-scrollbar-track,
+[data-slot="table-container"]::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb,
+[data-slot="table-container"]::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+  background-color: color-mix(in srgb, var(--foreground) 38%, transparent);
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb:hover,
+[data-slot="table-container"]::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--foreground) 56%, transparent);
 }
 
 /* Print styles to preserve colors */

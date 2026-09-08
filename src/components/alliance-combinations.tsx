@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
   Tabs,
   TabsContent,
@@ -33,16 +33,14 @@ import {
   Database,
   Settings,
   Download,
-  Upload,
   Plus,
-  Trash2,
   Loader2,
   History as HistoryIcon,
   AlertTriangle,
   FileText,
 } from "lucide-react";
 import { useAllianceCombinations } from "../hooks/useAllianceCombinations";
-import { gridToCsv, parseCsvToGrid } from "@/lib/csv";
+import { gridToCsv } from "@/lib/csv";
 import { downloadResultsPdf } from "@/lib/pdf";
 import { PriceGrid } from "./price-grid";
 import { DiscountGrid } from "./discount-grid";
@@ -59,9 +57,7 @@ export default function AllianceCombinationsCalculator() {
     tenderers,
     setTenderers,
     prices,
-    setPrices,
     discounts,
-    setDiscounts,
     tendererNames,
     setTendererNames,
     contractNames,
@@ -104,10 +100,6 @@ export default function AllianceCombinationsCalculator() {
     comparison,
     setComparison,
     setComparisonSnapshot,
-    scenarios,
-    saveScenario,
-    deleteScenario,
-    loadScenario,
     history,
     loadHistoryItem,
     deleteHistoryItem,
@@ -118,9 +110,6 @@ export default function AllianceCombinationsCalculator() {
 
   const [showAbbreviatedAmounts, setShowAbbreviatedAmounts] = useState(false);
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [scenarioName, setScenarioName] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const historyProps = {
     history,
@@ -131,24 +120,6 @@ export default function AllianceCombinationsCalculator() {
   };
 
   /* ---------- data I/O ---------- */
-
-  const handleCsvImport = async (file: File) => {
-    setImportError(null);
-    try {
-      const grid = parseCsvToGrid(await file.text());
-      if (grid.contracts !== contracts) setContracts(grid.contracts);
-      if (grid.tenderers !== tenderers) setTenderers(grid.tenderers);
-      setPrices(grid.prices);
-      setDiscounts(grid.discounts);
-      // The imported grid may have different dimensions — clear any stale
-      // constraints (force/forbid/caps) so they don't reference out-of-range cells.
-      setForced([]);
-      setForbidden([]);
-      setMaxWins([]);
-    } catch (err) {
-      setImportError(err instanceof Error ? err.message : "Could not read that CSV file.");
-    }
-  };
 
   const handleCsvExport = () => {
     const csv = gridToCsv({
@@ -170,19 +141,30 @@ export default function AllianceCombinationsCalculator() {
 
   const handlePdfExport = () => {
     if (!results) return;
+    const heading = window.prompt(
+      "Enter a heading for this report (shown below Alliance Combinations Report):",
+      "Alliance decision summary"
+    );
+    if (heading === null) return;
     downloadResultsPdf(results, {
-      title: "Alliance Combinations Report",
+      reportHeading: heading,
       tendererNames,
       contractNames,
+      whatIf: whatIf?.applied ? whatIf : undefined,
     });
   };
 
   /* ---------- small helpers ---------- */
 
   const toggleContract = (c: number) =>
-    setSelectedContracts((prev) =>
-      prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
-    );
+    setSelectedContracts((prev) => {
+      // An empty selection means “all contracts” internally. When the user
+      // unticks one from that default, materialize the remaining contracts.
+      const current = prev.length === 0 ? Array.from({ length: contracts }, (_, i) => i) : prev;
+      return (current.includes(c) ? current.filter((x) => x !== c) : [...current, c]).sort(
+        (a, b) => a - b
+      );
+    });
 
   const nameInputs = (
     count: number,
@@ -300,7 +282,7 @@ export default function AllianceCombinationsCalculator() {
                   <Slider
                     id="contracts"
                     min={1}
-                    max={7}
+                    max={10}
                     step={1}
                     value={[contracts]}
                     onValueChange={(value) => setContracts(value[0])}
@@ -308,7 +290,7 @@ export default function AllianceCombinationsCalculator() {
                   />
                   <div className="flex justify-between text-xs text-muted-foreground">
                     <span>1</span>
-                    <span>7</span>
+                    <span>10</span>
                   </div>
                 </div>
 
@@ -384,7 +366,7 @@ export default function AllianceCombinationsCalculator() {
                       <div key={i} className="flex items-center space-x-2">
                         <Checkbox
                           id={`contract-${i}`}
-                          checked={selectedContracts.includes(i)}
+                          checked={selectedContracts.length === 0 || selectedContracts.includes(i)}
                           onCheckedChange={() => toggleContract(i)}
                           suppressHydrationWarning
                         />
@@ -395,83 +377,11 @@ export default function AllianceCombinationsCalculator() {
                     ))}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Tick the contracts to include. Unticked contracts are excluded;
-                    with nothing ticked, all contracts are used.
+                    All contracts are selected by default. Untick contracts to exclude
+                    them from the calculation.
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 border-t pt-4">
-                  <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
-                    <Upload className="h-4 w-4" /> Import grid CSV
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleCsvExport}>
-                    <Download className="h-4 w-4" /> Export grid CSV
-                  </Button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv,text/csv"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) handleCsvImport(f);
-                      e.target.value = "";
-                    }}
-                  />
-                  {importError && (
-                    <span className="text-sm text-red-500">{importError}</span>
-                  )}
-                </div>
-
-                <div className="space-y-2 border-t pt-4">
-                  <Label>Named Scenarios</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      value={scenarioName}
-                      onChange={(e) => setScenarioName(e.target.value)}
-                      placeholder="Scenario name"
-                      className="flex-1"
-                    />
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        const n = scenarioName.trim();
-                        if (n) {
-                          saveScenario(n);
-                          setScenarioName("");
-                        }
-                      }}
-                    >
-                      <Plus className="h-4 w-4" /> Save
-                    </Button>
-                  </div>
-                  {scenarios.length > 0 && (
-                    <ul className="space-y-1">
-                      {scenarios.map((s) => (
-                        <li
-                          key={s.id}
-                          className="flex items-center justify-between gap-2 text-sm"
-                        >
-                          <span className="truncate">{s.name}</span>
-                          <span className="flex shrink-0 gap-1">
-                            <Button variant="ghost" size="sm" onClick={() => loadScenario(s.id)}>
-                              Load
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                              onClick={() => deleteScenario(s.id)}
-                              aria-label={`Delete scenario ${s.name}`}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
               </CardContent>
             </Card>
 
@@ -554,6 +464,8 @@ export default function AllianceCombinationsCalculator() {
               setDiscountMax={setDiscountMax}
               useAverageDOP={useAverageDOP}
               setUseAverageDOP={setUseAverageDOP}
+              fastMode={fastMode}
+              setFastMode={setFastMode}
               format={formatCurrency}
               onCalculate={calculateRandom}
               isCalculating={isCalculating}
@@ -584,6 +496,8 @@ export default function AllianceCombinationsCalculator() {
               tendererNames,
               contractNames,
               selectedContracts,
+              forced,
+              forbidden,
               showAbbreviated: showAbbreviatedAmounts,
               fastMode,
               useAverageDOP,

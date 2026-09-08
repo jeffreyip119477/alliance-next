@@ -134,20 +134,6 @@ export const generateResults = (
     }
   }
 
-  // Determine baseline standalone minimum cost options
-  const lowestBasePrices = Array(n)
-    .fill(0)
-    .map((_, j) => {
-      const validRowPrices = validPrices.map((t) => t[j]).filter((p) => p > 0);
-      return validRowPrices.length > 0
-        ? Number(Math.min(...validRowPrices).toFixed(2))
-        : 0;
-    });
-
-  const totalLowestBase = round2(
-    lowestBasePrices.reduce((a, b) => a + b, 0)
-  );
-
   // Calculate how many total contracts each tenderer submitted bids for
   // (to detect niche packages).
   const tendererTotalBidPoolCounts = Array(m)
@@ -177,6 +163,23 @@ export const generateResults = (
       }
       return list;
     });
+
+  // The standalone validity ceiling must reflect the active scenario. When
+  // the cheapest bidder is blocked (or another bidder is pinned), that bidder
+  // is not an eligible standalone option for the scenario and must not keep
+  // the replacement award invalid.
+  const lowestBasePrices = Array(n)
+    .fill(0)
+    .map((_, c) => {
+      const eligiblePrices = feasibleTenders[c]
+        .map((t) => validPrices[t][c])
+        .filter((p) => p > 0);
+      return eligiblePrices.length > 0
+        ? Number(Math.min(...eligiblePrices).toFixed(2))
+        : 0;
+    });
+
+  const totalLowestBase = round2(lowestBasePrices.reduce((a, b) => a + b, 0));
 
   const emptyResult = (): Results => ({
     totalLowestBase,

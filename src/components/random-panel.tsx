@@ -12,6 +12,12 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Database, Loader2 } from "lucide-react";
 
 export interface RandomPanelProps {
@@ -27,6 +33,8 @@ export interface RandomPanelProps {
   setDiscountMax: (n: number) => void;
   useAverageDOP: boolean;
   setUseAverageDOP: (b: boolean) => void;
+  fastMode: boolean;
+  setFastMode: (b: boolean) => void;
   format: (value: number, abbreviated?: boolean) => string;
   onCalculate: () => void;
   isCalculating: boolean;
@@ -45,6 +53,8 @@ export function RandomPanel({
   setDiscountMax,
   useAverageDOP,
   setUseAverageDOP,
+  fastMode,
+  setFastMode,
   format,
   onCalculate,
   isCalculating,
@@ -71,7 +81,7 @@ export function RandomPanel({
               <Slider
                 id="random-contracts"
                 min={1}
-                max={7}
+                max={10}
                 step={1}
                 value={[contracts]}
                 onValueChange={(value) => setContracts(value[0])}
@@ -79,7 +89,7 @@ export function RandomPanel({
               />
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>1</span>
-                <span>7</span>
+                <span>10</span>
               </div>
             </div>
 
@@ -161,6 +171,25 @@ export function RandomPanel({
           <Label htmlFor="random-averageDOP">
             Use Average Discount per DoP Across Contracts
           </Label>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="random-fastMode"
+            checked={fastMode}
+            onCheckedChange={setFastMode}
+          />
+          <Label htmlFor="random-fastMode">Fast mode (optimal ties only)</Label>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="cursor-help text-xs text-muted-foreground">(learn more)</span>
+              </TooltipTrigger>
+              <TooltipContent>
+                Prunes branches that cannot improve the best result found so far and keeps only tied-optimal configurations.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
 
         <div className="flex justify-end">

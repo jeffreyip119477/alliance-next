@@ -54,11 +54,15 @@ export interface Scenario {
   bestTotal: number | null;
 }
 
-export interface WhatIf {
+export interface WhatIfChange {
   t: number;
   c: number;
   tier: number;
   deltaPct: number;
+}
+export interface WhatIf {
+  changes: WhatIfChange[];
+  applied?: boolean;
 }
 
 interface Draft {
@@ -630,15 +634,15 @@ export const useAllianceCombinations = () => {
 
   // --- what-if: nudge one tier's discount on a COPY, compute transiently ---
   const computeWhatIf = useCallback(() => {
-    if (!whatIf) return;
-    const t = whatIf.t;
-    const c = whatIf.c;
-    const tier = whatIf.tier;
+    if (!whatIf || whatIf.changes.length === 0) return;
+    setWhatIf((current) => current ? { ...current, applied: true } : current);
     const d2 = discounts.map((row) => row.map((ladder) => [...ladder]));
-    const ladder = d2[t]?.[c];
-    if (ladder) {
-      const base = ladder[tier] ?? 0;
-      ladder[tier] = Number(Math.max(0, Math.min(100, base + whatIf.deltaPct)).toFixed(2));
+    for (const change of whatIf.changes) {
+      const ladder = d2[change.t]?.[change.c];
+      if (ladder) {
+        const base = ladder[change.tier] ?? 0;
+        ladder[change.tier] = Number(Math.max(0, Math.min(100, base + change.deltaPct)).toFixed(2));
+      }
     }
     const effective =
       selectedContracts.length > 0 ? selectedContracts : allIndices(contracts);
@@ -675,6 +679,9 @@ export const useAllianceCombinations = () => {
   // --- auto-recompute (debounced, only once the user has calculated) ---
   useEffect(() => {
     if (!hasCalculated) return;
+    // An explicit what-if calculation is already in flight/complete; don't
+    // let the draft autosave loop immediately re-trigger it and flicker UI.
+    if (whatIf?.applied) return;
     const timer = setTimeout(() => {
       const key = scenarioKey(
         prices,

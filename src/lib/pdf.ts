@@ -1,353 +1,360 @@
-// Text-based jsPDF report for alliance results.
-//
-// Pure text mode only: everything is drawn with doc.text / doc.line. No
-// autotable, no html2canvas, no images — so this module has no dependencies
-// beyond jspdf itself.
-//
-// Layout (A4, points):
-//   Page 1 (portrait): title + generation timestamp, summary block
-//     (totalLowestBase, best total, cost saving, valid combo count, search
-//     stats), best-combination table (contract / tenderer / cost) with the
-//     per-tenderer win counts.
-//   Subsequent pages (landscape): every enumerated combination as one row —
-//     rank, total, per-contract winner initials, per-contract costs, flags
-//     (Best / Niche) — paginated with the header repeated.
-//   Final section (landscape): niche combinations, if any.
-
 import { jsPDF } from "jspdf";
 import type { Results } from "./alliance-combinations";
 import { formatMoney } from "./currency";
 
 export interface PdfReportOptions {
   title?: string;
+  reportHeading?: string;
   tendererNames?: string[];
   contractNames?: string[];
+  whatIf?: { changes: Array<{ t: number; c: number; tier: number; deltaPct: number }> };
 }
-
-// A4 page dimensions in points.
-const A4_PORTRAIT = { w: 595.28, h: 841.89 };
-const A4_LANDSCAPE = { w: 841.89, h: 595.28 };
-const MARGIN = 36;
 
 type Orientation = "portrait" | "landscape";
+type Align = "left" | "center" | "right";
+type Column = { label: string; width: number; align?: Align };
 
-interface Ctx {
-  doc: jsPDF;
-  orient: Orientation;
-}
-
-interface Column {
-  label: string;
-  w: number;
-  align: "left" | "center" | "right";
-}
-
-const pageDims = (o: Orientation): { w: number; h: number } =>
-  o === "landscape" ? A4_LANDSCAPE : A4_PORTRAIT;
-
-const usableWidth = (o: Orientation): number => pageDims(o).w - 2 * MARGIN;
-
-const bottomY = (ctx: Ctx): number => pageDims(ctx.orient).h - MARGIN;
-
-/** Add a fresh page in ctx orientation; returns the y for the first content. */
-const freshPage = (ctx: Ctx): number => {
-  ctx.doc.addPage("a4", ctx.orient);
-  return MARGIN + 12;
+const PAGE = {
+  portrait: { width: 595.28, height: 841.89 },
+  landscape: { width: 841.89, height: 595.28 },
+} as const;
+const MARGIN = 38;
+const COLORS = {
+  ink: [25, 39, 52] as const,
+  muted: [93, 109, 124] as const,
+  teal: [0, 137, 157] as const,
+  tealSoft: [229, 247, 249] as const,
+  pink: [255, 94, 147] as const,
+  pinkSoft: [255, 238, 244] as const,
+  green: [27, 144, 90] as const,
+  greenSoft: [231, 248, 239] as const,
+  amber: [178, 111, 0] as const,
+  graySoft: [229, 231, 235] as const,
+  stripe: [247, 250, 252] as const,
+  line: [218, 226, 232] as const,
+  white: [255, 255, 255] as const,
 };
 
-/** True when this row does not fit below y on the current page. */
-const needsBreak = (ctx: Ctx, y: number, needed: number): boolean =>
-  y + needed > bottomY(ctx);
-
-const anchorX = (x: number, col: Column): number =>
-  col.align === "right" ? x + col.w - 2 : col.align === "center" ? x + col.w / 2 : x + 2;
-
-/** Scale columns proportionally so the table fits the usable page width. */
-const fitColumns = (cols: Column[], usable: number): Column[] => {
-  const total = cols.reduce((a, c) => a + c.w, 0);
-  if (total <= usable) return cols;
-  const k = usable / total;
-  return cols.map((c) => ({ ...c, w: c.w * k }));
+const rgb = (doc: jsPDF, color: readonly [number, number, number]) => doc.setTextColor(...color);
+const fill = (doc: jsPDF, color: readonly [number, number, number]) => doc.setFillColor(...color);
+const stroke = (doc: jsPDF, color: readonly [number, number, number]) => doc.setDrawColor(...color);
+const pageSize = (orientation: Orientation) => PAGE[orientation];
+const contentWidth = (orientation: Orientation) => pageSize(orientation).width - MARGIN * 2;
+const money = (value: number) => formatMoney(value);
+const labelFor = (names: string[] | undefined, index: number, prefix: string) => names?.[index]?.trim() || `${prefix}${index + 1}`;
+const tenderer = (names: string[] | undefined, index: number) => labelFor(names, index, "T");
+const contract = (names: string[] | undefined, index: number) => labelFor(names, index, "C");
+const localDateStamp = (date: Date) => {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+};
+const lowestBase = (results: Results, c: number) => {
+  const values = results.prices.map((row) => row?.[c] ?? 0).filter((v) => v > 0);
+  return values.length ? Math.min(...values) : 0;
 };
 
-/** Truncate a header label so it fits its (scaled) column width. */
-const fitLabel = (ctx: Ctx, label: string, col: Column, fontSize: number): string => {
-  const maxW = col.w - 4;
-  if (maxW <= 8) return label.length > 1 ? label.slice(0, 2) + "." : label;
-  ctx.doc.setFont("helvetica", "bold");
-  ctx.doc.setFontSize(fontSize);
-  if (ctx.doc.getTextWidth(label) <= maxW) return label;
-  let s = label;
-  while (s.length > 1 && ctx.doc.getTextWidth(s + "...") > maxW) {
-    s = s.slice(0, -1);
+const headerFooter = (doc: jsPDF, orientation: Orientation, title: string, page: number) => {
+  const p = pageSize(orientation);
+  fill(doc, COLORS.teal);
+  doc.rect(0, 0, p.width, 7, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  rgb(doc, COLORS.muted);
+  doc.text(title, MARGIN, 24);
+  doc.setFont("helvetica", "normal");
+  doc.text(`Alliance report  |  ${page}`, p.width - MARGIN, 24, { align: "right" });
+  stroke(doc, COLORS.line);
+  doc.setLineWidth(0.5);
+  doc.line(MARGIN, p.height - 26, p.width - MARGIN, p.height - 26);
+  doc.setFontSize(7);
+  doc.text("Generated by Alliance Combinations Calculator", MARGIN, p.height - 14);
+  doc.text("Confidential working report", p.width - MARGIN, p.height - 14, { align: "right" });
+};
+
+const sectionTitle = (doc: jsPDF, orientation: Orientation, title: string, subtitle?: string, y = 52) => {
+  const p = pageSize(orientation);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(17);
+  rgb(doc, COLORS.ink);
+  doc.text(title, MARGIN, y);
+  fill(doc, COLORS.teal);
+  doc.rect(MARGIN, y + 9, 42, 3, "F");
+  if (subtitle) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    rgb(doc, COLORS.muted);
+    doc.text(subtitle, MARGIN, y + 28, { maxWidth: p.width - MARGIN * 2 });
+    return y + 46;
   }
-  return s + "...";
+  return y + 28;
 };
 
-/**
- * Draw a table: bold header row + one line per data row, paginating as needed
- * (the header is repeated on each new page). Returns the y just below the
- * last drawn row. `firstHeaderY` is the text baseline of the header on the
- * current page.
- */
-const drawTable = (
-  ctx: Ctx,
-  cols: Column[],
-  rows: string[][],
-  firstHeaderY: number,
-  rowHeight: number,
-  fontSize: number
-): number => {
-  const scaled = fitColumns(cols, usableWidth(ctx.orient));
+const card = (doc: jsPDF, x: number, y: number, w: number, h: number, label: string, value: string, tone: "teal" | "green" | "pink" | "neutral") => {
+  const bg = tone === "teal" ? COLORS.tealSoft : tone === "green" ? COLORS.greenSoft : tone === "pink" ? COLORS.pinkSoft : COLORS.stripe;
+  const accent = tone === "teal" ? COLORS.teal : tone === "green" ? COLORS.green : tone === "pink" ? COLORS.pink : COLORS.line;
+  fill(doc, bg);
+  doc.roundedRect(x, y, w, h, 7, 7, "F");
+  fill(doc, accent);
+  doc.roundedRect(x, y, 4, h, 2, 2, "F");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  rgb(doc, COLORS.muted);
+  doc.text(label, x + 14, y + 17);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  rgb(doc, COLORS.ink);
+  doc.text(value, x + 14, y + 39);
+};
+
+const drawTable = (doc: jsPDF, orientation: Orientation, columns: Column[], rows: string[][], startY: number, options: { fontSize?: number; rowHeight?: number; headerFill?: readonly [number, number, number]; highlightRows?: Set<number>; highlightCells?: Set<string>; cellFills?: Map<string, readonly [number, number, number]> } = {}) => {
+  const fontSize = options.fontSize ?? 7.5;
+  const rowHeight = options.rowHeight ?? 17;
+  const available = contentWidth(orientation);
+  const total = columns.reduce((sum, col) => sum + col.width, 0);
+  const scale = total > available ? available / total : 1;
+  const cols = columns.map((col) => ({ ...col, width: col.width * scale }));
   const x0 = MARGIN;
-  const width = scaled.reduce((a, c) => a + c.w, 0);
-
-  const drawHeader = (y: number): number => {
-    ctx.doc.setFont("helvetica", "bold");
-    ctx.doc.setFontSize(fontSize);
-    let cx = x0;
-    for (const col of scaled) {
-      ctx.doc.text(fitLabel(ctx, col.label, col, fontSize), anchorX(cx, col), y, { align: col.align });
-      cx += col.w;
-    }
-    ctx.doc.setLineWidth(0.5);
-    ctx.doc.line(x0, y + 3, x0 + width, y + 3);
-    return y + rowHeight;
+  const headerHeight = 25;
+  let y = startY;
+  const drawHeader = () => {
+    fill(doc, options.headerFill ?? COLORS.ink);
+    doc.roundedRect(x0, y, available, headerHeight, 4, 4, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(fontSize);
+    rgb(doc, COLORS.white);
+    let x = x0;
+    cols.forEach((col) => {
+      const align = col.align ?? "left";
+      const text = col.label.length > 24 ? `${col.label.slice(0, 22)}...` : col.label;
+      doc.text(text, align === "right" ? x + col.width - 5 : align === "center" ? x + col.width / 2 : x + 5, y + 16, { align });
+      x += col.width;
+    });
+    y += headerHeight;
   };
-
-  let y = drawHeader(firstHeaderY);
-  ctx.doc.setFont("helvetica", "normal");
-  ctx.doc.setFontSize(fontSize);
-  for (const row of rows) {
-    if (needsBreak(ctx, y, rowHeight)) y = drawHeader(freshPage(ctx));
-    let cx = x0;
-    for (let i = 0; i < scaled.length; i++) {
-      ctx.doc.text(row[i] ?? "", anchorX(cx, scaled[i]), y, { align: scaled[i].align });
-      cx += scaled[i].w;
+  drawHeader();
+  rows.forEach((row, rowIndex) => {
+    if (y + rowHeight > pageSize(orientation).height - 38) {
+      doc.addPage("a4", orientation);
+      headerFooter(doc, orientation, "Alliance Combinations Report", doc.getNumberOfPages());
+      y = 48;
+      drawHeader();
     }
-    y += rowHeight;
-  }
-  return y;
-};
-
-const defaultTendererLabel = (t: number): string =>
-  t < 26 ? String.fromCharCode(65 + t) : `T${t + 1}`;
-
-const tendererLabel = (names: string[] | undefined, t: number): string => {
-  const nm = names?.[t];
-  if (typeof nm === "string" && nm.trim() !== "") return nm.trim();
-  return defaultTendererLabel(t);
-};
-
-const tendererInitial = (names: string[] | undefined, t: number): string =>
-  tendererLabel(names, t).charAt(0).toUpperCase() || defaultTendererLabel(t);
-
-const contractLabel = (names: string[] | undefined, c: number): string => {
-  const nm = names?.[c];
-  if (typeof nm === "string" && nm.trim() !== "") return nm.trim();
-  return `C${c + 1}`;
-};
-
-/**
- * Generate a PDF report of the alliance results as a Blob.
- * Currency comes from opts (default "GBP"); names fall back to A/B/C... and C1/C2/...
- */
-export const generateResultsPdf: (results: Results, opts?: PdfReportOptions) => Promise<Blob> =
-  async (results: Results, opts: PdfReportOptions = {}): Promise<Blob> => {
-    const tendererNames = opts.tendererNames;
-    const contractNames = opts.contractNames;
-    const money = (v: number): string => formatMoney(v);
-
-    const m = results.prices.length;
-    const n = results.prices[0]?.length ?? 0;
-    const title = opts.title?.trim() ? opts.title.trim() : "Alliance Results";
-
-    const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-    const ctxP: Ctx = { doc, orient: "portrait" };
-
-    let y = MARGIN + 12;
-
-    // --- Title + generation timestamp ---
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text(title, MARGIN, y);
-    y += 18;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.text(`Generated: ${new Date().toISOString()}`, MARGIN, y);
-    y += 12;
-    doc.line(MARGIN, y, A4_PORTRAIT.w - MARGIN, y);
-    y += 18;
-
-    // --- Summary block ---
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("SUMMARY", MARGIN, y);
-    y += 16;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    const summary: Array<[string, string]> = [
-      ["Total lowest base (standalone bids)", money(results.totalLowestBase)],
-      ["Best alliance total (selected, discounted)", money(results.totalSelectedDiscounted)],
-      ["Cost saving", money(results.costSaving)],
-      ["Valid combinations", String(results.totalCombos)],
-    ];
-    for (const [k, v] of summary) {
-      doc.text(k, MARGIN, y);
-      doc.text(v, MARGIN + 220, y, { align: "left" });
-      y += 14;
-    }
-    y += 2;
-    doc.text(
-      `Search stats: ${results.stats.nodesVisited} nodes visited, ${results.stats.leavesEvaluated} leaves evaluated, ` +
-        `${results.stats.prunedNodes} pruned, ${results.stats.elapsedMs} ms elapsed`,
-      MARGIN,
-      y
-    );
-    y += 20;
-
-    // --- Best combination table ---
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("BEST COMBINATION", MARGIN, y);
-    y += 6;
-    if (results.bestCombo) {
-      const best = results.bestCombo;
-      const cols: Column[] = [
-        { label: "Contract", w: 200, align: "left" },
-        { label: "Tenderer", w: 160, align: "left" },
-        { label: "Cost", w: 140, align: "right" },
-      ];
-      const rows: string[][] = [];
-      for (let c = 0; c < n; c++) {
-        const t = best.assignment[c];
-        const assigned = t != null && t >= 0 && t < m;
-        rows.push([
-          contractLabel(contractNames, c),
-          assigned ? tendererLabel(tendererNames, t) : "-",
-          assigned ? money(best.contractCosts[c] ?? 0) : "-",
-        ]);
+    const highlighted = options.highlightRows?.has(rowIndex);
+    fill(doc, highlighted ? COLORS.greenSoft : rowIndex % 2 ? COLORS.stripe : COLORS.white);
+    doc.rect(x0, y, available, rowHeight, "F");
+    stroke(doc, COLORS.line);
+    doc.line(x0, y + rowHeight, x0 + available, y + rowHeight);
+    doc.setFont("helvetica", highlighted ? "bold" : "normal");
+    rgb(doc, highlighted ? COLORS.green : COLORS.ink);
+    let x = x0;
+    cols.forEach((col, i) => {
+      const align = col.align ?? "left";
+      const text = String(row[i] ?? "");
+      const cellFill = options.cellFills?.get(`${rowIndex}:${i}`);
+      const cellHighlighted = options.highlightCells?.has(`${rowIndex}:${i}`) === true;
+      if (cellFill || cellHighlighted) {
+        fill(doc, cellFill ?? COLORS.tealSoft);
+        doc.roundedRect(x + 2, y + 2, col.width - 4, rowHeight - 4, 3, 3, "F");
       }
-      y = drawTable(ctxP, cols, rows, y, 14, 9);
-      const winSummary = Array.from({ length: m }, (_, t) =>
-        `${tendererLabel(tendererNames, t)}: ${best.tendererCounts[t] ?? 0}`
-      ).join(",  ");
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      if (needsBreak(ctxP, y, 16)) y = freshPage(ctxP);
-      doc.text(`Win counts: ${winSummary}`, MARGIN, y);
-      y += 16;
-    } else {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.text("No valid combinations were found.", MARGIN, y);
-      y += 14;
-    }
+      const lines = text.split("\n");
+      const textY = lines.length > 1 ? y + 9 : y + 11;
+      doc.text(lines.slice(0, 2), align === "right" ? x + col.width - 5 : align === "center" ? x + col.width / 2 : x + 5, textY, { align, lineHeightFactor: 1.15 });
+      x += col.width;
+    });
+    y += rowHeight;
+  });
+  return y + 10;
+};
 
-    // --- All enumerated combinations (landscape pages) ---
-    doc.addPage("a4", "landscape");
-    const ctxL: Ctx = { doc, orient: "landscape" };
-    let yL = MARGIN + 12;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text(`ALL COMBINATIONS (${results.combinations.length})`, MARGIN, yL);
-    yL += 8;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.text("Columns: rank, total, then per-contract winner and cost, then flags (Best / Niche).", MARGIN, yL);
-    yL += 12;
+export const generateResultsPdf = async (results: Results, opts: PdfReportOptions = {}): Promise<Blob> => {
+  const title = "Alliance Combinations Report";
+  const reportHeading = opts.reportHeading?.trim() || "Alliance decision summary";
+  const m = results.prices.length;
+  const n = results.prices[0]?.length ?? 0;
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  let page = 1;
+  let orientation: Orientation = "portrait";
+  headerFooter(doc, orientation, title, page);
+  let y = 72;
 
-    if (results.combinations.length > 0) {
-      const cols: Column[] = [
-        { label: "#", w: 26, align: "left" },
-        { label: "Total", w: 72, align: "right" },
-        ...Array.from({ length: n }, (_, c): Column => ({
-          label: contractLabel(contractNames, c),
-          w: 20,
-          align: "center",
-        })),
-        ...Array.from({ length: n }, (_, c): Column => ({
-          label: `${contractLabel(contractNames, c)} $`,
-          w: 48,
-          align: "right",
-        })),
-        { label: "Flags", w: 52, align: "left" },
-      ];
-      const rows = results.combinations.map((combo, i): string[] => {
-        const flags: string[] = [];
-        if (combo.isGlobalBest) flags.push("Best");
-        if (combo.isNicheOptimization) flags.push("Niche");
-        const row: string[] = [String(i + 1), money(combo.total)];
-        for (let c = 0; c < n; c++) {
-          const t = combo.assignment[c];
-          row.push(t != null && t >= 0 && t < m ? tendererInitial(tendererNames, t) : "-");
-        }
-        for (let c = 0; c < n; c++) {
-          const t = combo.assignment[c];
-          row.push(t != null && t >= 0 && t < m ? money(combo.contractCosts[c] ?? 0) : "-");
-        }
-        row.push(flags.join("/"));
-        return row;
-      });
-      yL = drawTable(ctxL, cols, rows, yL, 13, 7);
-    }
-
-    // --- Final section: niche combinations, if any ---
-    if (results.nicheCombos.length > 0) {
-      yL += 10;
-      if (needsBreak(ctxL, yL, 40)) yL = freshPage(ctxL);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(11);
-      doc.text(`NICHE COMBINATIONS (${results.nicheCombos.length})`, MARGIN, yL);
-      yL += 18;
-      const cols: Column[] = [
-        { label: "#", w: 30, align: "left" },
-        { label: "Total", w: 72, align: "right" },
-        { label: "Assignment", w: 320, align: "left" },
-        { label: "Win counts", w: 320, align: "left" },
-      ];
-      const rows = results.nicheCombos.map((combo): string[] => {
-        // nicheCombos are the same Combination objects as in `combinations`.
-        let rank = results.combinations.indexOf(combo) + 1;
-        if (rank < 1) {
-          rank =
-            results.combinations.findIndex(
-              (c) =>
-                c.total === combo.total &&
-                JSON.stringify(c.assignment) === JSON.stringify(combo.assignment)
-            ) + 1;
-        }
-        const assignment = Array.from({ length: n }, (_, c) => {
-          const t = combo.assignment[c];
-          return `${contractLabel(contractNames, c)}: ${t != null && t >= 0 && t < m ? tendererLabel(tendererNames, t) : "-"}`;
-        }).join(", ");
-        const winCounts = Array.from({ length: m }, (_, t) =>
-          `${tendererLabel(tendererNames, t)}: ${combo.tendererCounts[t] ?? 0}`
-        ).join(", ");
-        return [rank > 0 ? String(rank) : "-", money(combo.total), assignment, winCounts];
-      });
-      yL = drawTable(ctxL, cols, rows, yL, 14, 7);
-    }
-
-    return doc.output("blob");
-  };
-
-/**
- * Generate the report and trigger a browser download named from opts.title
- * (fallback "alliance-results.pdf"). Creates a Blob URL, clicks a programmatic
- * <a>, and revokes the URL. Browser-only.
- */
-export const downloadResultsPdf: (results: Results, opts?: PdfReportOptions) => void = (
-  results: Results,
-  opts: PdfReportOptions = {}
-): void => {
-  if (typeof document === "undefined") {
-    throw new Error("downloadResultsPdf requires a DOM environment (browser)");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(26);
+  rgb(doc, COLORS.ink);
+  doc.text(title, MARGIN, y);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(13);
+  rgb(doc, COLORS.ink);
+  doc.text(reportHeading, MARGIN, y + 22);
+  doc.setFontSize(10);
+  rgb(doc, COLORS.muted);
+  const generatedAt = new Date();
+  const reportDate = generatedAt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  doc.text(`Report Generated on ${reportDate}`, MARGIN, y + 42);
+  fill(doc, COLORS.teal);
+  doc.rect(MARGIN, y + 59, 86, 5, "F");
+  y += 98;
+  if (opts.whatIf?.changes?.length) {
+    const lines = opts.whatIf.changes.map((change, i) => `${i + 1}. ${contract(opts.contractNames, change.c)} / ${tenderer(opts.tendererNames, change.t)} — DoP ${change.tier + 1}, ${change.deltaPct >= 0 ? "+" : ""}${change.deltaPct}%`);
+    const boxH = 34 + lines.length * 13;
+    fill(doc, COLORS.tealSoft);
+    doc.roundedRect(MARGIN, y, contentWidth(orientation), boxH, 6, 6, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); rgb(doc, COLORS.teal);
+    doc.text("What-if scenario applied", MARGIN + 14, y + 18);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); rgb(doc, COLORS.ink);
+    doc.text(lines, MARGIN + 14, y + 34, { lineHeightFactor: 1.35 });
+    y += boxH + 16;
   }
-  const base = (opts.title ?? "").trim();
-  const safe = base.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  const filename = safe ? `${safe}.pdf` : "alliance-results.pdf";
+  y = sectionTitle(doc, orientation, "Results Summary", "A concise view of the best valid alliance configuration and the search behind it.", y);
+  const gap = 10;
+  const cardW = (contentWidth(orientation) - gap * 2) / 3;
+  card(doc, MARGIN, y, cardW, 58, "Total lowest base", money(results.totalLowestBase), "pink");
+  card(doc, MARGIN + cardW + gap, y, cardW, 58, "Best alliance total", money(results.totalSelectedDiscounted), "teal");
+  card(doc, MARGIN + (cardW + gap) * 2, y, cardW, 58, "Cost saving", money(results.costSaving), "green");
+  y += 78;
+  fill(doc, COLORS.tealSoft);
+  doc.roundedRect(MARGIN, y, contentWidth(orientation), 54, 6, 6, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  rgb(doc, COLORS.teal);
+  doc.text("Decision readout", MARGIN + 14, y + 19);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  rgb(doc, COLORS.ink);
+  const readout = results.bestCombo ? `The recommended alliance is ${money(results.totalSelectedDiscounted)}, saving ${money(results.costSaving)} against the standalone base minimum. ${results.nicheCombos.length ? `${results.nicheCombos.length} niche optimization${results.nicheCombos.length === 1 ? " is" : "s are"} also available for review.` : "No niche optimization was identified."}` : "No valid combination was found for the current input grid.";
+  doc.text(doc.splitTextToSize(readout, contentWidth(orientation) - 28), MARGIN + 14, y + 34);
 
+  orientation = "landscape";
+  doc.addPage("a4", orientation);
+  page++;
+  headerFooter(doc, orientation, title, page);
+  y = sectionTitle(doc, orientation, "Base Prices Reference", "Lowest standalone bid per contract is the validity ceiling used by the calculator.");
+  const baseRows = Array.from({ length: m }, (_, t) => {
+    const row = results.prices[t] ?? [];
+    const values = Array.from({ length: n }, (_, c) => row[c] > 0 ? money(row[c]) : "Declined");
+    const total = row.reduce((sum, value) => sum + (value > 0 ? value : 0), 0);
+    return [tenderer(opts.tendererNames, t), ...values, money(total)];
+  });
+  const baseCellFills = new Map<string, readonly [number, number, number]>();
+  for (let t = 0; t < m; t++) {
+    for (let c = 0; c < n; c++) {
+      const value = results.prices[t]?.[c] ?? 0;
+      if (value > 0 && value === lowestBase(results, c)) baseCellFills.set(`${t}:${c + 1}`, COLORS.pinkSoft);
+    }
+  }
+  y = drawTable(doc, orientation, [{ label: "Tenderer", width: 120 }, ...Array.from({ length: n }, (_, c) => ({ label: contract(opts.contractNames, c), width: 88 })), { label: "Total", width: 90, align: "right" }], baseRows, y, { fontSize: 7.5, rowHeight: 20, headerFill: COLORS.ink, cellFills: baseCellFills });
+  const baseY = y + 2;
+  fill(doc, COLORS.pinkSoft);
+  doc.roundedRect(MARGIN, baseY, contentWidth(orientation), 32, 5, 5, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  rgb(doc, COLORS.pink);
+  doc.text("Lowest base by contract", MARGIN + 10, baseY + 13);
+  doc.setFont("helvetica", "normal");
+  rgb(doc, COLORS.ink);
+  const lowestBaseDetails = Array.from({ length: n }, (_, c) => {
+    const value = lowestBase(results, c);
+    const winner = results.prices.findIndex((row) => (row?.[c] ?? 0) === value && value > 0);
+    return `${contract(opts.contractNames, c)}: ${winner >= 0 ? tenderer(opts.tendererNames, winner) : "No bid"} ${money(value)}`;
+  });
+  doc.text(lowestBaseDetails.join("   |   "), MARGIN + 10, baseY + 25);
+
+  doc.addPage("a4", orientation);
+  page++;
+  headerFooter(doc, orientation, title, page);
+  y = sectionTitle(doc, orientation, "Discounts and Amounts Matrix Breakdown", "Each cell shows the discounted amount and percentage for a tenderer, contract, and DoP.");
+  const discountRows: string[][] = [];
+  const discountCellFills = new Map<string, readonly [number, number, number]>();
+  for (let t = 0; t < m; t++) {
+    for (let d = 0; d < n; d++) {
+      const rowIndex = discountRows.length;
+      const row = [d === 0 ? tenderer(opts.tendererNames, t) : "", `DoP ${d + 1}`];
+      for (let c = 0; c < n; c++) {
+        const base = results.prices[t]?.[c] ?? 0;
+        if (!base) { row.push("-"); continue; }
+        const pct = results.discounts[t]?.[c]?.[d] ?? 0;
+        const amount = base * (1 - pct / 100);
+        row.push(`${money(amount)} (${pct.toFixed(2)}%)`);
+        const selectedTier = results.bestCombo?.assignment?.[c] === t
+          ? (results.bestCombo.tendererCounts[t] ?? 0) - 1
+          : -1;
+        if (d === selectedTier) discountCellFills.set(`${rowIndex}:${c + 2}`, COLORS.tealSoft);
+        else if (amount > lowestBase(results, c)) discountCellFills.set(`${rowIndex}:${c + 2}`, COLORS.graySoft);
+      }
+      discountRows.push(row);
+    }
+  }
+  drawTable(doc, orientation, [{ label: "Tenderer", width: 110 }, { label: "DoP", width: 65, align: "center" as const }, ...Array.from({ length: n }, (_, c) => ({ label: contract(opts.contractNames, c), width: 105, align: "center" as const }))], discountRows, y, { fontSize: 7, rowHeight: 18, headerFill: COLORS.teal, cellFills: discountCellFills });
+
+  doc.addPage("a4", orientation);
+  page++;
+  headerFooter(doc, orientation, title, page);
+  y = sectionTitle(doc, orientation, "Best Combination Award Breakdown", "Cyan highlights the award made by the cheapest valid configuration; variance is measured against the base minimum.");
+  const best = results.bestCombo;
+  if (best) {
+    const awardRows = Array.from({ length: m }, (_, t) => {
+      const cells = Array.from({ length: n }, (_, c) => best.assignment[c] === t ? money(best.contractCosts[c]) : "-");
+      const tendererTotal = best.contractCosts.reduce((sum, cost, c) => sum + (best.assignment[c] === t ? cost : 0), 0);
+      return [tenderer(opts.tendererNames, t), ...cells, tendererTotal ? money(tendererTotal) : "-"];
+    });
+    const highlightCells = new Set<string>();
+    best.assignment.forEach((t, c) => {
+      if (t >= 0) {
+        const rowIndex = t;
+        highlightCells.add(`${rowIndex}:${c + 1}`);
+      }
+    });
+    y = drawTable(doc, orientation, [{ label: "Tenderer", width: 120 }, ...Array.from({ length: n }, (_, c) => ({ label: contract(opts.contractNames, c), width: 90, align: "center" as const })), { label: "Award total", width: 100, align: "right" as const }], awardRows, y, { fontSize: 7.5, rowHeight: 22, headerFill: COLORS.teal, highlightCells });
+    y = drawTable(doc, orientation, [{ label: "", width: 120 }, ...Array.from({ length: n }, () => ({ label: "", width: 90, align: "center" as const })), { label: "", width: 100, align: "right" as const }], [["Total", ...best.contractCosts.map((cost) => money(cost)), money(best.total)]], y, { fontSize: 8, rowHeight: 24, headerFill: COLORS.ink });
+    fill(doc, COLORS.greenSoft);
+    doc.roundedRect(MARGIN, y + 2, contentWidth(orientation), 36, 5, 5, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    rgb(doc, COLORS.green);
+    const awardSummary = best.tendererCounts
+      .map((count, t) => count > 0 ? `${tenderer(opts.tendererNames, t)}: ${count} contract${count === 1 ? "" : "s"}` : "")
+      .filter(Boolean)
+      .join("   |   ");
+    doc.text(`Award total ${money(best.total)}  |  Saving ${money(results.costSaving)}  |  Awards: ${awardSummary || "none"}`, MARGIN + 10, y + 24);
+  } else {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    rgb(doc, COLORS.muted);
+    doc.text("No valid combination was found.", MARGIN, y + 20);
+  }
+
+  doc.addPage("a4", orientation);
+  page++;
+  headerFooter(doc, orientation, title, page);
+  y = sectionTitle(doc, orientation, "Strategy Matrix Explorer", `All ${results.combinations.length.toLocaleString()} valid scenarios, ranked by grand total. Best and niche strategies are tagged for quick review.`);
+  const compact = (value: string, max = 14) => value.length > max ? `${value.slice(0, max - 1)}.` : value;
+  const strategyRows = results.combinations.map((combo, index) => {
+    const profile = combo.isGlobalBest ? "GLOBAL BEST" : combo.isNicheOptimization ? "NICHE" : "SPLIT VARIANT";
+    const cells = Array.from({ length: n }, (_, c) => {
+      const t = combo.assignment[c];
+      return t >= 0 ? `${compact(tenderer(opts.tendererNames, t))}\n${money(combo.contractCosts[c] ?? 0)}` : "-";
+    });
+    const savings = Math.max(0, results.totalLowestBase - combo.total);
+    return [String(index + 1), profile, ...cells, money(combo.total), savings ? `+${money(savings)}` : money(0)];
+  });
+  const bestRows = new Set(results.combinations.map((combo, index) => combo.isGlobalBest ? index : -1).filter((index) => index >= 0));
+  drawTable(doc, orientation, [{ label: "#", width: 28, align: "center" }, { label: "Profile", width: 82 }, ...Array.from({ length: n }, (_, c) => ({ label: contract(opts.contractNames, c), width: 95 })), { label: "Grand total", width: 80, align: "right" }, { label: "Net savings", width: 80, align: "right" }], strategyRows, y, { fontSize: 6.3, rowHeight: 30, headerFill: COLORS.ink, highlightRows: bestRows });
+
+  if (results.nicheCombos.length > 0) {
+    doc.addPage("a4", orientation);
+    page++;
+    headerFooter(doc, orientation, title, page);
+    y = sectionTitle(doc, orientation, "Niche Optimization Appendix", "Configurations where a tenderer wins every contract in a limited bid pool.");
+    const nicheRows = results.nicheCombos.map((combo, i) => [String(i + 1), money(combo.total), Array.from({ length: n }, (_, c) => `${contract(opts.contractNames, c)}: ${tenderer(opts.tendererNames, combo.assignment[c])}`).join(" | "), combo.tendererCounts.join(", ")]);
+    drawTable(doc, orientation, [{ label: "#", width: 28, align: "center" }, { label: "Total", width: 80, align: "right" }, { label: "Assignment", width: 430 }, { label: "Win counts", width: 100, align: "center" }], nicheRows, y, { fontSize: 7.5, rowHeight: 24, headerFill: COLORS.amber });
+  }
+
+  return doc.output("blob");
+};
+
+export const downloadResultsPdf = (results: Results, opts: PdfReportOptions = {}): void => {
+  if (typeof document === "undefined") throw new Error("downloadResultsPdf requires a DOM environment (browser)");
+  const stamp = localDateStamp(new Date());
+  const filename = `Alliance Combinations Report_${stamp}.pdf`;
   void generateResultsPdf(results, opts).then((blob) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

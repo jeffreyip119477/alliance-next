@@ -239,6 +239,27 @@ describe("fastMode: incumbent-bound fast path", () => {
 });
 
 describe("constraints: forced / forbidden / maxWins", () => {
+  it("recalculates the validity ceiling when the cheapest bid is blocked", () => {
+    const prices = [
+      [500, 500],
+      [300, 400],
+      [400, 100],
+    ];
+    const discounts = prices.map((row) =>
+      row.map(() => [0, 0])
+    );
+    const forbidden = Array.from({ length: 3 }, (_, t) =>
+      Array.from({ length: 2 }, (_, c) => t === 1 && c === 0)
+    );
+
+    const res = generateResults(prices, discounts, 2, 3, false, { forbidden });
+
+    expect(res.totalLowestBase).toBe(500);
+    expect(res.bestCombo?.assignment).toEqual([2, 2]);
+    expect(res.bestCombo?.total).toBe(500);
+    expect(res.totalCombos).toBeGreaterThan(0);
+  });
+
   it("forces a specific tenderer to win a contract", () => {
     // Force contract 3 to B (index 1): the A,A,A,B,B optimum already has B there.
     const res = generateResults(P5, D5, 5, 5, false, {

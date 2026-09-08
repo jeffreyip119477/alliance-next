@@ -28,15 +28,18 @@ export const projectToSelectedContracts = (
   forced?: (number | null)[],
   forbidden?: boolean[][]
 ): ProjectionResult => {
-  const k = selectedIndices.length;
+  // Keep projected columns in original contract order, even for an unordered
+  // selection restored from an older saved calculation.
+  const orderedIndices = [...selectedIndices].sort((a, b) => a - b);
+  const k = orderedIndices.length;
   const m = prices.length;
 
   const newPrices: number[][] = Array.from({ length: m }, (_, t) =>
-    selectedIndices.map((c) => prices[t]?.[c] ?? 0)
+    orderedIndices.map((c) => prices[t]?.[c] ?? 0)
   );
 
   const newDiscounts: number[][][] = Array.from({ length: m }, (_, t) =>
-    selectedIndices.map((c) => {
+    orderedIndices.map((c) => {
       const ladder = discounts[t]?.[c] ?? [];
       // Wins are capped at k, so only tiers 0..k-1 can ever be reached.
       return Array.from({ length: k }, (_, d) => ladder[d] ?? 0);
@@ -44,12 +47,12 @@ export const projectToSelectedContracts = (
   );
 
   const newForced: (number | null)[] | undefined = forced
-    ? selectedIndices.map((c) => forced[c] ?? null)
+    ? orderedIndices.map((c) => forced[c] ?? null)
     : undefined;
 
   const newForbidden: boolean[][] | undefined = forbidden
     ? Array.from({ length: m }, (_, t) =>
-        selectedIndices.map((c) => forbidden[t]?.[c] === true)
+        orderedIndices.map((c) => forbidden[t]?.[c] === true)
       )
     : undefined;
 
@@ -57,7 +60,7 @@ export const projectToSelectedContracts = (
     prices: newPrices,
     discounts: newDiscounts,
     cCount: k,
-    indexMap: [...selectedIndices],
+    indexMap: orderedIndices,
     forced: newForced,
     forbidden: newForbidden,
   };

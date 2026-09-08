@@ -26,7 +26,7 @@ export interface DiscountGridProps {
 }
 
 /**
- * DoP (degree of preference) discount entry grid. Tier d (1-based) applies
+ * DoP (degree of preference) discount entry grid. DoP d (1-based) applies
  * when a tenderer wins d contracts — the final-count rule — so each cell
  * holds a percentage 0..100.
  */
@@ -56,8 +56,8 @@ export function DiscountGrid({
       <CardHeader>
         <CardTitle>Discount Percentages (%)</CardTitle>
         <CardDescription>
-          Tier d applies when a tenderer wins {tierCount} contracts in total:
-          tier 1 prices a single win, tier 2 prices two wins, and so on.
+          DoP d applies when a tenderer wins {tierCount} contracts in total:
+          DoP 1 prices a single win, DoP 2 prices two wins, and so on.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -68,7 +68,7 @@ export function DiscountGrid({
                 <th className="sticky left-0 z-10 bg-white px-2 py-2 text-left font-medium dark:bg-gray-900">
                   Tenderer
                 </th>
-                <th className="w-16 px-2 py-2 text-center font-medium">Tier</th>
+                <th className="w-16 px-2 py-2 text-center font-medium">DoP</th>
                 {Array.from({ length: contracts }).map((_, c) => (
                   <th
                     key={c}
@@ -109,7 +109,7 @@ export function DiscountGrid({
                             disabled={disabled}
                             onChange={(v) => onDiscountChange(t, c, dopIndex, v)}
                             className="w-20"
-                            ariaLabel={`Discount tier ${dopIndex + 1} for ${tendererNames[t] || `T${t + 1}`} on ${contractNames[c] || `C${c + 1}`}`}
+                            ariaLabel={`Discount DoP ${dopIndex + 1} for ${tendererNames[t] || `T${t + 1}`} on ${contractNames[c] || `C${c + 1}`}`}
                           />
                         </td>
                       );
