@@ -47,13 +47,9 @@ export interface ResultsView {
 const isSelectedIn = (view: ResultsView, c: number) =>
   view.selectedContracts.length === 0 || view.selectedContracts.includes(c);
 
-const lowestBaseFor = (results: Results, c: number, view?: Pick<ResultsView, "forced" | "forbidden">): number => {
+const lowestBaseFor = (results: Results, c: number): number => {
   const valid = results.prices
-    .map((row, t) => {
-      if (view?.forbidden[t]?.[c] === true) return 0;
-      if (view?.forced[c] != null && view.forced[c] !== t) return 0;
-      return row?.[c];
-    })
+    .map((row) => row?.[c])
     .filter((p) => typeof p === "number" && p > 0);
   return valid.length > 0 ? Math.min(...valid) : 0;
 };
@@ -71,7 +67,7 @@ const resultColumnFor = (view: ResultsView, contractIndex: number): number =>
 const lowestBasePrices = (view: ResultsView): number[] =>
   Array.from({ length: view.contracts }, (_, c) => {
     const resultColumn = resultColumnFor(view, c);
-    return resultColumn >= 0 ? lowestBaseFor(view.results, resultColumn, view) : 0;
+    return resultColumn >= 0 ? lowestBaseFor(view.results, resultColumn) : 0;
   });
 
 const varianceIndicator = (
@@ -112,6 +108,12 @@ export function SummaryCard({
 }) {
   const [showLegend, setShowLegend] = useState(true);
   const { results, format, showAbbreviated } = view;
+  const infeasible = results.status === "infeasible";
+  const awardedContracts = results.bestCombo?.assignment.filter((t) => t >= 0).length ?? 0;
+  const suppliersUsed = results.bestCombo?.tendererCounts.filter((count) => count > 0).length ?? 0;
+  const savingRate = results.totalLowestBase > 0 && !infeasible
+    ? (results.costSaving / results.totalLowestBase) * 100
+    : 0;
 
   return (
     <Card>
@@ -182,16 +184,30 @@ export function SummaryCard({
           <div className="rounded-lg border bg-white p-4 shadow-sm dark:bg-gray-800">
             <div className="text-sm text-muted-foreground">Total Selected Discounted</div>
             <div className="text-2xl font-bold">
-              {format(results.totalSelectedDiscounted, showAbbreviated)}
+              {infeasible ? "—" : format(results.totalSelectedDiscounted, showAbbreviated)}
             </div>
           </div>
           <div className="rounded-lg border bg-[#00B2CA]/10 p-4 shadow-sm dark:bg-[#00B2CA]/20">
             <div className="text-sm text-muted-foreground dark:text-gray-400">Cost Saving</div>
             <div className="text-2xl font-bold text-[#00B2CA]">
-              {format(results.costSaving, showAbbreviated)}
+              {infeasible ? "—" : format(results.costSaving, showAbbreviated)}
             </div>
           </div>
         </div>
+        {infeasible && (
+          <div className="mt-4 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>No compliant award was found. No saving is reported until every selected contract can be awarded within the original lowest-base ceiling.</span>
+          </div>
+        )}
+        {!infeasible && results.bestCombo && (
+          <div className="mt-4 grid gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs sm:grid-cols-4">
+            <span><strong>Coverage:</strong> {awardedContracts}/{view.selectedContracts.length || view.contracts} contracts</span>
+            <span><strong>Suppliers used:</strong> {suppliersUsed}</span>
+            <span><strong>Saving rate:</strong> {savingRate.toFixed(1)}%</span>
+            <span><strong>Search:</strong> {results.combinationsTruncated ? "Exact best award" : `${results.stats.leavesEvaluated.toLocaleString()} leaves`}</span>
+          </div>
+        )}
 
       </CardContent>
     </Card>
@@ -594,6 +610,11 @@ export function WhatIfCard({
       );
     }
   );
+  const tierCount = view.selectedContracts.length > 0 ? view.selectedContracts.length : view.contracts;
+  const validContractsFor = (t: number) => Array.from({ length: view.contracts }, (_, c) => c).filter((c) => {
+    const rc = resultColumnFor(view, c);
+    return isSelectedIn(view, c) && rc >= 0 && (view.results.prices[t]?.[rc] ?? 0) > 0;
+  });
 
   const select =
     "h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
@@ -633,7 +654,11 @@ export function WhatIfCard({
             <select
               className={select}
               value={change.t}
-              onChange={(e) => updateChange(index, { t: Number(e.target.value) })}
+               onChange={(e) => {
+                 const nextT = Number(e.target.value);
+                 const valid = validContractsFor(nextT);
+                 updateChange(index, { t: nextT, c: valid.includes(change.c) ? change.c : (valid[0] ?? 0) });
+               }}
             >
               {Array.from({ length: view.tenderers }).map((_, t) => (
                 <option key={t} value={t}>
@@ -649,7 +674,7 @@ export function WhatIfCard({
               value={change.c}
               onChange={(e) => updateChange(index, { c: Number(e.target.value) })}
             >
-              {Array.from({ length: view.contracts }).map((_, c) => (
+              {validContractsFor(change.t).map((c) => (
                 <option key={c} value={c}>
                   {view.contractNames[c] || `C${c + 1}`}
                 </option>
@@ -663,7 +688,7 @@ export function WhatIfCard({
               value={change.tier}
               onChange={(e) => updateChange(index, { tier: Number(e.target.value) })}
             >
-              {Array.from({ length: view.contracts }).map((_, d) => (
+              {Array.from({ length: tierCount }).map((_, d) => (
                 <option key={d} value={d}>
                   DoP {d + 1}
                 </option>
@@ -810,10 +835,11 @@ export function AnalyticsCard({ view }: { view: ResultsView }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Win Analytics</CardTitle>
-        <CardDescription>
-          Participation across the {view.results.totalCombos.toLocaleString()}{" "}
-          enumerated valid configurations.
+          <CardTitle>Win Analytics</CardTitle>
+          <CardDescription>
+          {view.results.combinationsTruncated
+            ? "Supplier participation for the exact best award only; the full strategy set was not materialized."
+            : `Participation across the ${view.results.totalCombos.toLocaleString()} enumerated valid configurations.`}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -860,7 +886,9 @@ export function ComboExplorerCard({
       <CardHeader>
         <CardTitle>Strategy Matrix Explorer</CardTitle>
         <CardDescription>
-          Review the enumerated baseline scenarios, cheapest first.
+          {results.combinationsTruncated
+            ? "The grid is large, so this shows the exact best award without materializing every assignment."
+            : "Review the enumerated baseline scenarios, cheapest first."}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -987,6 +1015,24 @@ export function DataQualityHints({ view }: { view: ResultsView }) {
     }
     return out;
   }, [view]);
+
+  if (view.results.status === "infeasible") {
+    const selected = [...view.selectedContracts].sort((a, b) => a - b);
+    const missing = view.results.infeasibleContracts.map((c) => selected[c] ?? c);
+    return (
+      <section className="rounded-md border border-red-500/30 bg-red-500/[0.04] px-4 py-3" role="alert">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-red-600" />
+          <span className="text-sm font-medium text-red-700 dark:text-red-300">No compliant calculation</span>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {missing.length > 0
+            ? `Cannot award: ${missing.map((c) => view.contractNames[c] || `C${c + 1}`).join(", ")}.`
+            : "The pins, blocks, caps, or price ceilings leave no valid award."}
+        </p>
+      </section>
+    );
+  }
 
   if (errors.length === 0) {
     return (

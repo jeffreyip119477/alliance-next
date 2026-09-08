@@ -32,6 +32,8 @@ export interface CsvGrid {
   tenderers: number;
   prices: number[][]; // rows = tenderers, cols = contracts
   discounts: number[][][]; // tenderer -> contract -> ladder of tier values
+  tendererNames?: string[];
+  contractNames?: string[];
 }
 
 interface GridInput {
@@ -203,6 +205,8 @@ export const parseCsvToGrid: (text: string) => CsvGrid = (text: string): CsvGrid
   if (tenderers < 0) throw new Error("parseCsvToGrid: missing or invalid TENDERERS directive");
 
   // Optional tenderer names (single row of exactly `tenderers` quoted fields).
+  let tendererNames: string[] | undefined;
+  let contractNames: string[] | undefined;
   if (idx < lines.length && lines[idx] === S_TENDERER_NAMES) {
     idx++;
     if (idx >= lines.length) throw new Error("parseCsvToGrid: TENDERER-NAMES section is empty");
@@ -211,6 +215,7 @@ export const parseCsvToGrid: (text: string) => CsvGrid = (text: string): CsvGrid
     if (fields.length !== tenderers) {
       throw new Error(`parseCsvToGrid: TENDERER-NAMES has ${fields.length} fields, expected ${tenderers}`);
     }
+    tendererNames = fields;
   }
 
   // Optional contract names (single row of exactly `contracts` quoted fields).
@@ -222,6 +227,7 @@ export const parseCsvToGrid: (text: string) => CsvGrid = (text: string): CsvGrid
     if (fields.length !== contracts) {
       throw new Error(`parseCsvToGrid: CONTRACT-NAMES has ${fields.length} fields, expected ${contracts}`);
     }
+    contractNames = fields;
   }
 
   // PRICES: exactly `tenderers` rows, each with exactly `contracts` numeric fields.
@@ -289,5 +295,8 @@ export const parseCsvToGrid: (text: string) => CsvGrid = (text: string): CsvGrid
     discounts.push(row);
   }
 
-  return { contracts, tenderers, prices, discounts };
+  const result: CsvGrid = { contracts, tenderers, prices, discounts };
+  if (tendererNames) result.tendererNames = tendererNames;
+  if (contractNames) result.contractNames = contractNames;
+  return result;
 };

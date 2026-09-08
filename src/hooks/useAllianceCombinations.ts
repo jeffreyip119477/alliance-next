@@ -37,6 +37,9 @@ export interface Snapshot {
   selectedContracts: number[];
   useAverageDOP: boolean;
   fastMode: boolean;
+  forced?: (number | null)[];
+  forbidden?: boolean[][];
+  maxWins?: number[];
 }
 
 export interface HistoryItem {
@@ -45,14 +48,6 @@ export interface HistoryItem {
   name: string;
   source: "manual" | "random";
   snapshot: Snapshot;
-}
-
-export interface Scenario {
-  id: string;
-  name: string;
-  savedAt: number;
-  snapshot: Snapshot;
-  bestTotal: number | null;
 }
 
 export interface WhatIfChange {
@@ -76,11 +71,13 @@ interface Draft {
   selectedContracts: number[];
   useAverageDOP: boolean;
   fastMode: boolean;
+  forced?: (number | null)[];
+  forbidden?: boolean[][];
+  maxWins?: number[];
 }
 
 const HISTORY_KEY = "alliance-calculator-history";
 const DRAFT_KEY = "alliance-calculator-draft";
-const SCENARIOS_KEY = "alliance-calculator-scenarios";
 const HISTORY_LIMIT = 50;
 // A worker normally completes the showcase scenario in a few milliseconds.
 // This guard prevents a failed worker (which otherwise leaves the UI spinning
@@ -169,7 +166,7 @@ const normalizeHistoryItem = (raw: unknown): HistoryItem | null => {
           : [],
         contractNames: [],
         selectedContracts,
-        useAverageDOP: true,
+        useAverageDOP: false,
         fastMode: false,
       },
     };
@@ -224,7 +221,8 @@ export const useAllianceCombinations = () => {
   const [selectedContracts, setSelectedContracts] = useState<number[]>([]);
 
   // --- settings ---
-  const [useAverageDOP, setUseAverageDOP] = useState(initialShowcase.useAverageDOP);
+  // A new manual calculation starts with Average-DoP mode disabled.
+  const [useAverageDOP, setUseAverageDOP] = useState(false);
   const [fastMode, setFastMode] = useState(false);
   const [priceMin, setPriceMin] = useState(450000);
   const [priceMax, setPriceMax] = useState(500000);
@@ -244,10 +242,9 @@ export const useAllianceCombinations = () => {
   const [hasCalculated, setHasCalculated] = useState(false);
   const [displayedCombinations, setDisplayedCombinations] = useState(50);
 
-  // --- what-if / comparison / scenarios ---
+  // --- what-if / comparison ---
   const [whatIf, setWhatIf] = useState<WhatIf | null>(null);
   const [comparison, setComparison] = useState<Results | null>(null);
-  const [scenarios, setScenarios] = useState<Scenario[]>([]);
 
   // --- history ---
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -255,6 +252,7 @@ export const useAllianceCombinations = () => {
   const workerRef = useRef<Worker | null>(null);
   const requestSeq = useRef(0);
   const lastInputKeyRef = useRef<string>("");
+  const whatIfBaseKeyRef = useRef<string>("");
 
   // --- worker lifecycle ---
   useEffect(() => {
@@ -423,7 +421,7 @@ export const useAllianceCombinations = () => {
     setSelectedContracts((prev) => prev.filter((i) => i >= 0 && i < contracts));
   }, [contracts, tenderers]);
 
-  // --- mount: restore draft + history + scenarios ---
+  // --- mount: restore draft + history ---
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -448,7 +446,7 @@ export const useAllianceCombinations = () => {
       setTenderers(draft.tenderers);
       setPrices(draft.prices);
       setDiscounts(draft.discounts);
-      setUseAverageDOP(draft.useAverageDOP ?? true);
+       setUseAverageDOP(draft.useAverageDOP ?? false);
       setFastMode(draft.fastMode ?? false);
       if (Array.isArray(draft.tendererNames) && draft.tendererNames.length === draft.tenderers) {
         setTendererNames(draft.tendererNames);
@@ -459,6 +457,9 @@ export const useAllianceCombinations = () => {
       if (Array.isArray(draft.selectedContracts)) {
         setSelectedContracts(draft.selectedContracts);
       }
+      setForced(draft.forced ?? []);
+      setForbidden(draft.forbidden ?? []);
+      setMaxWins(draft.maxWins ?? []);
     }
 
     const h = readJson<unknown[]>(HISTORY_KEY);
@@ -470,8 +471,6 @@ export const useAllianceCombinations = () => {
       setHistory(normalized.slice(0, HISTORY_LIMIT));
     }
 
-    const s = readJson<Scenario[]>(SCENARIOS_KEY);
-    if (Array.isArray(s)) setScenarios(s);
   }, []);
 
   // --- draft autosave (debounced) ---
@@ -488,6 +487,9 @@ export const useAllianceCombinations = () => {
         selectedContracts,
         useAverageDOP,
         fastMode,
+        forced,
+        forbidden,
+        maxWins,
       };
       writeJson(DRAFT_KEY, draft);
     }, 500);
@@ -502,6 +504,9 @@ export const useAllianceCombinations = () => {
     selectedContracts,
     useAverageDOP,
     fastMode,
+    forced,
+    forbidden,
+    maxWins,
   ]);
 
   // --- explicit actions ---
@@ -534,11 +539,17 @@ export const useAllianceCombinations = () => {
       selectedContracts,
       useAverageDOP,
       fastMode,
+      forced,
+      forbidden,
+      maxWins,
     }),
-    [contracts, tenderers, tendererNames, contractNames, selectedContracts, useAverageDOP, fastMode]
+    [contracts, tenderers, tendererNames, contractNames, selectedContracts, useAverageDOP, fastMode, forced, forbidden, maxWins]
   );
 
   const calculate = useCallback(() => {
+    // A normal calculation is based on the live grid; never leave a prior
+    // transient what-if badge attached to the new result.
+    setWhatIf(null);
     computeCurrent(
       prices,
       discounts,
@@ -592,6 +603,7 @@ export const useAllianceCombinations = () => {
   );
 
   const calculateRandom = useCallback(() => {
+    setWhatIf(null);
     const { prices: rp, discounts: rd } = generateRandomData(
       contracts,
       tenderers,
@@ -622,9 +634,12 @@ export const useAllianceCombinations = () => {
         tendererNames,
         contractNames,
         selectedContracts,
-        useAverageDOP,
-        fastMode,
-      },
+         useAverageDOP,
+         fastMode,
+         forced,
+         forbidden,
+         maxWins,
+       },
       "random"
     );
     setHasCalculated(true);
@@ -708,6 +723,18 @@ export const useAllianceCombinations = () => {
     if (!whatIf || whatIf.changes.length === 0) return;
     setWhatIf((current) => current ? { ...current, applied: true } : current);
     const d2 = discounts.map((row) => row.map((ladder) => [...ladder]));
+    whatIfBaseKeyRef.current = scenarioKey(
+      prices,
+      discounts,
+      contracts,
+      tenderers,
+      useAverageDOP,
+      fastMode,
+      selectedContracts,
+      forced,
+      forbidden,
+      maxWins
+    );
     for (const change of whatIf.changes) {
       const ladder = d2[change.t]?.[change.c];
       if (ladder) {
@@ -752,7 +779,25 @@ export const useAllianceCombinations = () => {
     if (!hasCalculated) return;
     // An explicit what-if calculation is already in flight/complete; don't
     // let the draft autosave loop immediately re-trigger it and flicker UI.
-    if (whatIf?.applied) return;
+    if (whatIf?.applied) {
+      const currentKey = scenarioKey(
+        prices,
+        discounts,
+        contracts,
+        tenderers,
+        useAverageDOP,
+        fastMode,
+        selectedContracts,
+        forced,
+        forbidden,
+        maxWins
+      );
+      // Editing the live grid/settings invalidates a transient what-if result.
+      if (whatIfBaseKeyRef.current && currentKey !== whatIfBaseKeyRef.current) {
+        setWhatIf(null);
+      }
+      return;
+    }
     const timer = setTimeout(() => {
       const key = scenarioKey(
         prices,
@@ -857,10 +902,10 @@ export const useAllianceCombinations = () => {
       setContractNames(s.contractNames);
       setSelectedContracts(s.selectedContracts ?? []);
       setUseAverageDOP(s.useAverageDOP);
-      setFastMode(s.fastMode ?? false);
-      setForced([]);
-      setForbidden([]);
-      setMaxWins([]);
+       setFastMode(s.fastMode ?? false);
+       setForced(s.forced ?? []);
+       setForbidden(s.forbidden ?? []);
+       setMaxWins(s.maxWins ?? []);
       setWhatIf(null);
       computeCurrent(
         s.prices,
@@ -870,9 +915,9 @@ export const useAllianceCombinations = () => {
         s.useAverageDOP,
         s.fastMode ?? false,
         s.selectedContracts ?? [],
-        [],
-        [],
-        []
+         s.forced ?? [],
+         s.forbidden ?? [],
+         s.maxWins ?? []
       );
       setHasCalculated(true);
     },
@@ -899,69 +944,6 @@ export const useAllianceCombinations = () => {
     setHistory([]);
     writeJson(HISTORY_KEY, []);
   }, []);
-
-  // --- scenarios (named snapshots for comparison) ---
-  const saveScenario = useCallback(
-    (name: string) => {
-      const scenario: Scenario = {
-        id: makeId("s"),
-        name,
-        savedAt: Date.now(),
-        snapshot: makeSnapshot(prices, discounts),
-        bestTotal: results?.bestCombo?.total ?? null,
-      };
-      setScenarios((prev) => {
-        const next = [...prev, scenario];
-        writeJson(SCENARIOS_KEY, next);
-        return next;
-      });
-    },
-    [prices, discounts, results, makeSnapshot]
-  );
-
-  const deleteScenario = useCallback((id: string) => {
-    setScenarios((prev) => {
-      const next = prev.filter((s) => s.id !== id);
-      writeJson(SCENARIOS_KEY, next);
-      return next;
-    });
-  }, []);
-
-  const loadScenario = useCallback(
-    (id: string) => {
-      const s = scenarios.find((x) => x.id === id);
-      if (!s) return;
-      const snap = s.snapshot;
-      if (!snap || typeof snap.contracts !== "number" || typeof snap.tenderers !== "number") return;
-      setContracts(snap.contracts);
-      setTenderers(snap.tenderers);
-      setPrices(snap.prices);
-      setDiscounts(snap.discounts);
-      setTendererNames(snap.tendererNames);
-      setContractNames(snap.contractNames);
-      setSelectedContracts(snap.selectedContracts ?? []);
-      setUseAverageDOP(snap.useAverageDOP);
-      setFastMode(snap.fastMode ?? false);
-      setForced([]);
-      setForbidden([]);
-      setMaxWins([]);
-      setWhatIf(null);
-      computeCurrent(
-        snap.prices,
-        snap.discounts,
-        snap.contracts,
-        snap.tenderers,
-        snap.useAverageDOP,
-        snap.fastMode ?? false,
-        snap.selectedContracts ?? [],
-        [],
-        [],
-        []
-      );
-      setHasCalculated(true);
-    },
-    [scenarios, computeCurrent]
-  );
 
   // Comparison baseline: snapshot the current results for side-by-side view.
   const setComparisonSnapshot = useCallback(() => {
@@ -1033,16 +1015,12 @@ export const useAllianceCombinations = () => {
     loadShowcaseData,
     newCalculation,
     computeWhatIf,
-    // what-if / comparison / scenarios
+    // what-if / comparison
     whatIf,
     setWhatIf,
     comparison,
     setComparison,
     setComparisonSnapshot,
-    scenarios,
-    saveScenario,
-    deleteScenario,
-    loadScenario,
     // history
     history,
     loadHistoryItem,

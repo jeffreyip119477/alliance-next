@@ -56,8 +56,9 @@ export function DiscountGrid({
       <CardHeader>
         <CardTitle>Discount Percentages (%)</CardTitle>
         <CardDescription>
-          DoP d applies when a tenderer wins {tierCount} contracts in total:
-          DoP 1 prices a single win, DoP 2 prices two wins, and so on.
+          Enter the discount applied to each contract when a tenderer wins a
+          given number of contracts. DoP 1 prices a single win, DoP 2 prices
+          two wins, and so on ({tierCount} tiers are reachable in this scenario).
         </CardDescription>
       </CardHeader>
       <CardContent>

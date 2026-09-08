@@ -111,10 +111,10 @@ describe("csv names", () => {
     expect(csv).toContain('"C2, Lot 2"');
   });
 
-  it("names do not corrupt the grid: parse still deep-equals the bare grid", () => {
+  it("round-trips tenderer and contract names", () => {
     const csv = gridToCsv(named);
     const back = parseCsvToGrid(csv);
-    expect(back).toEqual(grid);
+    expect(back).toEqual({ ...grid, tendererNames, contractNames });
   });
 
   it("rejects a names row with the wrong field count", () => {

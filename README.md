@@ -1,4 +1,15 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+Alliance Combinations Calculator is an offline-friendly Next.js tool for
+evaluating contract awards across tenderers. Each selected contract must be
+covered by a bid, and every awarded amount must be no greater than that
+contract's original lowest submitted base price. Pins, blocks, and maximum-win
+constraints can therefore make a scenario infeasible rather than authorizing a
+higher price.
+
+For large grids (up to 10 contracts × 20 tenderers), the calculator uses an
+exact subset dynamic-programming solver to find the best compliant award. It
+does not materialize every assignment in that case; the result explains when
+the strategy explorer has been capped. Average-DoP mode is disabled for new
+manual calculations.
 
 ## Getting Started
 

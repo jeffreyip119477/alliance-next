@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 import {
   Tabs,
   TabsContent,
@@ -23,6 +23,16 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -33,6 +43,7 @@ import {
   Database,
   Settings,
   Download,
+  Upload,
   Plus,
   Loader2,
   History as HistoryIcon,
@@ -40,7 +51,7 @@ import {
   FileText,
 } from "lucide-react";
 import { useAllianceCombinations } from "../hooks/useAllianceCombinations";
-import { gridToCsv } from "@/lib/csv";
+import { gridToCsv, parseCsvToGrid } from "@/lib/csv";
 import { downloadResultsPdf } from "@/lib/pdf";
 import { PriceGrid } from "./price-grid";
 import { DiscountGrid } from "./discount-grid";
@@ -57,7 +68,9 @@ export default function AllianceCombinationsCalculator() {
     tenderers,
     setTenderers,
     prices,
+    setPrices,
     discounts,
+    setDiscounts,
     tendererNames,
     setTendererNames,
     contractNames,
@@ -111,6 +124,11 @@ export default function AllianceCombinationsCalculator() {
 
   const [showAbbreviatedAmounts, setShowAbbreviatedAmounts] = useState(false);
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
+  const [csvError, setCsvError] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const csvInputRef = useRef<HTMLInputElement>(null);
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+  const [reportHeading, setReportHeading] = useState("Alliance decision summary");
 
   const historyProps = {
     history,
@@ -140,19 +158,54 @@ export default function AllianceCombinationsCalculator() {
     URL.revokeObjectURL(url);
   };
 
+  const handleCsvImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const grid = parseCsvToGrid(await file.text());
+      if (grid.contracts < 1 || grid.contracts > 10 || grid.tenderers < 1 || grid.tenderers > 20) {
+        throw new Error("The imported grid must contain 1–10 contracts and 1–20 tenderers.");
+      }
+      newCalculation();
+      setContracts(grid.contracts);
+      setTenderers(grid.tenderers);
+      setPrices(grid.prices);
+      setDiscounts(grid.discounts);
+      setTendererNames(grid.tendererNames ?? Array.from({ length: grid.tenderers }, (_, i) => `Tenderer ${i + 1}`));
+      setContractNames(grid.contractNames ?? Array.from({ length: grid.contracts }, (_, i) => `Contract ${i + 1}`));
+      setSelectedContracts([]);
+      setForced([]);
+      setForbidden([]);
+      setMaxWins([]);
+      setCsvError(null);
+    } catch (error) {
+      setCsvError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const handlePdfExport = () => {
     if (!results) return;
-    const heading = window.prompt(
-      "Enter a heading for this report (shown below Alliance Combinations Report):",
-      "Alliance decision summary"
-    );
-    if (heading === null) return;
-    downloadResultsPdf(results, {
-      reportHeading: heading,
-      tendererNames,
-      contractNames,
-      whatIf: whatIf?.applied ? whatIf : undefined,
-    });
+    setPdfDialogOpen(true);
+  };
+
+  const confirmPdfExport = async () => {
+    if (!results) return;
+    try {
+      setPdfError(null);
+      await downloadResultsPdf(results, {
+        reportHeading: reportHeading.trim() || "Alliance decision summary",
+        tendererNames,
+        contractNames,
+        whatIf: whatIf?.applied ? whatIf : undefined,
+        forced,
+        forbidden,
+        selectedContracts,
+      });
+      setPdfDialogOpen(false);
+    } catch (error) {
+      setPdfError(error instanceof Error ? error.message : String(error));
+    }
   };
 
   /* ---------- small helpers ---------- */
@@ -197,6 +250,19 @@ export default function AllianceCombinationsCalculator() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <main className="container mx-auto px-4 py-8 lg:pr-96">
+        <AlertDialog open={pdfDialogOpen} onOpenChange={setPdfDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Export PDF report</AlertDialogTitle>
+              <AlertDialogDescription>Choose the heading shown on the report cover.</AlertDialogDescription>
+            </AlertDialogHeader>
+            <Input aria-label="PDF report heading" value={reportHeading} onChange={(event) => setReportHeading(event.target.value)} />
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={(event) => { event.preventDefault(); void confirmPdfExport(); }}>Export PDF</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <header className="mb-8 flex flex-row items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold">Alliance Combinations Calculator</h1>
@@ -215,6 +281,10 @@ export default function AllianceCombinationsCalculator() {
                 </Button>
               </>
             )}
+            <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvImport} />
+            <Button variant="outline" onClick={() => csvInputRef.current?.click()}>
+              <Upload className="h-4 w-4" /> Import CSV
+            </Button>
             <Button variant="outline" onClick={loadShowcaseData} title="Load and calculate the built-in six-contract showcase">
               <Database className="h-4 w-4" /> Showcase
             </Button>
@@ -239,6 +309,20 @@ export default function AllianceCombinationsCalculator() {
             <AlertTriangle className="h-4 w-4 text-red-500" />
             <AlertTitle>Calculation failed</AlertTitle>
             <AlertDescription>{calcError}</AlertDescription>
+          </Alert>
+        )}
+        {csvError && (
+          <Alert className="mb-6 border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950">
+            <AlertTriangle className="h-4 w-4 text-red-500" />
+            <AlertTitle>CSV import failed</AlertTitle>
+            <AlertDescription>{csvError}</AlertDescription>
+          </Alert>
+        )}
+        {pdfError && (
+          <Alert className="mb-6 border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950">
+            <AlertTriangle className="h-4 w-4 text-red-500" />
+            <AlertTitle>PDF export failed</AlertTitle>
+            <AlertDescription>{pdfError}</AlertDescription>
           </Alert>
         )}
 
@@ -342,10 +426,9 @@ export default function AllianceCombinationsCalculator() {
                     </Tooltip>
                   </TooltipProvider>
                 </div>
-
                 <div className="flex items-center space-x-2">
                   <Switch id="fastMode" checked={fastMode} onCheckedChange={setFastMode} />
-                  <Label htmlFor="fastMode">Fast mode (optimal ties only)</Label>
+                   <Label htmlFor="fastMode">Fast mode (best award / optimal ties)</Label>
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -354,10 +437,9 @@ export default function AllianceCombinationsCalculator() {
                         </span>
                       </TooltipTrigger>
                       <TooltipContent>
-                        Fast mode prunes the search as soon as a configuration
-                        can no longer beat the best found so far. The explorer
-                        then lists only the tied-optimal configurations;
-                        best total and saving are unchanged.
+                        Fast mode keeps the exact best award and avoids
+                        materializing a large assignment set. On small grids,
+                        tied-optimal configurations remain available.
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -409,6 +491,21 @@ export default function AllianceCombinationsCalculator() {
               </CardContent>
             </Card>
 
+            <ConstraintsPanel
+              tenderers={tenderers}
+              contracts={contracts}
+              prices={prices}
+              tendererNames={tendererNames}
+              contractNames={contractNames}
+              selectedContracts={selectedContracts}
+              forced={forced}
+              forbidden={forbidden}
+              maxWins={maxWins}
+              setForced={setForced}
+              setForbidden={setForbidden}
+              setMaxWins={setMaxWins}
+            />
+
             {!showDiscounts ? (
               <PriceGrid
                 prices={prices}
@@ -438,20 +535,6 @@ export default function AllianceCombinationsCalculator() {
               />
             )}
 
-            <ConstraintsPanel
-              tenderers={tenderers}
-              contracts={contracts}
-              prices={prices}
-              tendererNames={tendererNames}
-              contractNames={contractNames}
-              selectedContracts={selectedContracts}
-              forced={forced}
-              forbidden={forbidden}
-              maxWins={maxWins}
-              setForced={setForced}
-              setForbidden={setForbidden}
-              setMaxWins={setMaxWins}
-            />
           </TabsContent>
 
           <TabsContent value="random" className="space-y-6">

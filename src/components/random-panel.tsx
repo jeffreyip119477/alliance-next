@@ -186,14 +186,13 @@ export function RandomPanel({
             </Tooltip>
           </TooltipProvider>
         </div>
-
         <div className="flex items-center space-x-2">
           <Switch
             id="random-fastMode"
             checked={fastMode}
             onCheckedChange={setFastMode}
           />
-          <Label htmlFor="random-fastMode">Fast mode (optimal ties only)</Label>
+          <Label htmlFor="random-fastMode">Fast mode (best award / optimal ties)</Label>
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -202,10 +201,9 @@ export function RandomPanel({
                 </span>
               </TooltipTrigger>
               <TooltipContent>
-                Fast mode prunes the search as soon as a configuration
-                can no longer beat the best found so far. The explorer
-                then lists only the tied-optimal configurations;
-                best total and saving are unchanged.
+                Fast mode keeps the exact best award and avoids materializing a
+                large assignment set. On small grids, tied-optimal
+                configurations remain available.
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

@@ -238,15 +238,24 @@ export function MobileHistoryDrawer({
         </div>
         {props.history.length > 0 && (
           <div className="border-t border-gray-200 p-4 dark:border-gray-700">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full text-destructive hover:text-destructive"
-              onClick={props.onClear}
-            >
-              <Trash2 className="mr-2 h-4 w-4" />
-              Clear All History
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm" className="w-full text-destructive hover:text-destructive">
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Clear All History
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Clear All History</AlertDialogTitle>
+                  <AlertDialogDescription>This removes every saved calculation from this browser.</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={props.onClear} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Clear All</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         )}
       </div>

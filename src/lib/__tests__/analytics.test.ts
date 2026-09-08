@@ -47,6 +47,8 @@ const mkResults = (cs: Combination[], totalCombos: number): Results => ({
   totalLowestBase: 210,
   totalSelectedDiscounted: cs[0]?.total ?? 0,
   costSaving: 20,
+  status: "ok",
+  infeasibleContracts: [],
   combinations: cs,
   bestCombo: cs[0] ?? null,
   nicheCombos: cs.filter((c) => c.isNicheOptimization),

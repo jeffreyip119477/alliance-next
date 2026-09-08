@@ -23,9 +23,32 @@ export const formatMoney = (
   }).format(value);
 };
 
-/** Parse a money input string (allows thousands commas, strips junk). */
+/**
+ * Parse a money input string. Both `1,234.56` and `1.234,56` are accepted;
+ * a lone comma followed by one or two digits is treated as a decimal comma,
+ * while a three-digit group is treated as a thousands separator.
+ */
 export const parseMoney = (raw: string): number => {
-  const cleaned = raw.replace(/,/g, "").replace(/[^\d.-]/g, "");
-  const n = Number.parseFloat(cleaned);
+  const source = String(raw ?? "").trim().replace(/[^\d,.-]/g, "");
+  if (!source) return 0;
+  const sign = source.startsWith("-") ? "-" : "";
+  const unsigned = source.replace(/^[+-]/, "");
+  const lastComma = unsigned.lastIndexOf(",");
+  const lastDot = unsigned.lastIndexOf(".");
+  let normalized: string;
+  if (lastComma >= 0 && lastDot >= 0) {
+    const decimalAt = Math.max(lastComma, lastDot);
+    const integer = unsigned.slice(0, decimalAt).replace(/[.,]/g, "");
+    const fraction = unsigned.slice(decimalAt + 1).replace(/[.,]/g, "");
+    normalized = `${integer}.${fraction}`;
+  } else if (lastComma >= 0) {
+    const fraction = unsigned.slice(lastComma + 1);
+    normalized = fraction.length > 0 && fraction.length <= 2
+      ? `${unsigned.slice(0, lastComma).replace(/,/g, "")}.${fraction}`
+      : unsigned.replace(/,/g, "");
+  } else {
+    normalized = unsigned;
+  }
+  const n = Number.parseFloat(sign + normalized);
   return Number.isFinite(n) ? Number(n.toFixed(2)) : 0;
 };

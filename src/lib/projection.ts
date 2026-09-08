@@ -30,7 +30,9 @@ export const projectToSelectedContracts = (
 ): ProjectionResult => {
   // Keep projected columns in original contract order, even for an unordered
   // selection restored from an older saved calculation.
-  const orderedIndices = [...selectedIndices].sort((a, b) => a - b);
+  const orderedIndices = [...new Set(
+    selectedIndices.filter((index) => Number.isInteger(index) && index >= 0 && index < prices[0]?.length)
+  )].sort((a, b) => a - b);
   const k = orderedIndices.length;
   const m = prices.length;
 

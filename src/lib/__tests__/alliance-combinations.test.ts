@@ -137,16 +137,16 @@ describe("alliance result engine — A=3 / B=2 scenario", () => {
     expect(zeros.bestCombo).toBeNull();
     expect(zeros.totalCombos).toBe(0);
 
-    // Partial bids: only A and B bid on C0/C1 — still computable.
+    // Partial bids: only A and B bid on C0/C1 — the selected full scenario is
+    // infeasible because C2..C4 cannot be awarded.
     const sparseP = P5.map((r) => r.map((v, c) => (c < 2 ? v : 0)));
     const sparseD = D5.map((t) => t.map(() => [0, 0, 0, 0, 0]));
     const sres = generateResults(sparseP, sparseD, 5, 5);
-    expect(sres.bestCombo).not.toBeNull();
-    // C0..C4 all zero except A/B bids on first two -> valid contracts are only C0,C1.
-    // Best: D not bidding; A vs B on both: A tier2? A has no tier data here (all 0)
-    // so plain base prices apply: A,A = 320, B,B=500, mixed... expect total <= TLB(=190)?
-    // C0 lbp=min(160,250,...)=100? No — D bids 100 on C0 (kept), so lbp=[100,100], TLB=200.
-    expect(sres.totalLowestBase).toBe(200);
+    expect(sres.bestCombo).toBeNull();
+    expect(sres.status).toBe("infeasible");
+    // C2..C4 have no bid and therefore cannot be silently omitted.
+    expect(sres.infeasibleContracts).toEqual([2, 3, 4]);
+    expect(sres.costSaving).toBe(0);
   });
 
   it("reports search stats and never reports negative savings", () => {
@@ -239,7 +239,7 @@ describe("fastMode: incumbent-bound fast path", () => {
 });
 
 describe("constraints: forced / forbidden / maxWins", () => {
-  it("recalculates the validity ceiling when the cheapest bid is blocked", () => {
+  it("keeps the original lowest-base ceiling when the cheapest bid is blocked", () => {
     const prices = [
       [500, 500],
       [300, 400],
@@ -254,10 +254,10 @@ describe("constraints: forced / forbidden / maxWins", () => {
 
     const res = generateResults(prices, discounts, 2, 3, false, { forbidden });
 
-    expect(res.totalLowestBase).toBe(500);
-    expect(res.bestCombo?.assignment).toEqual([2, 2]);
-    expect(res.bestCombo?.total).toBe(500);
-    expect(res.totalCombos).toBeGreaterThan(0);
+    expect(res.totalLowestBase).toBe(400);
+    expect(res.status).toBe("infeasible");
+    expect(res.bestCombo).toBeNull();
+    expect(res.costSaving).toBe(0);
   });
 
   it("forces a specific tenderer to win a contract", () => {
@@ -270,13 +270,13 @@ describe("constraints: forced / forbidden / maxWins", () => {
   });
 
   it("forbidding a cell removes every combo that used it", () => {
-    // Forbid D from C0: kills D,D,D,B,B ($426). A second valid split where D
-    // wins only C1/C2 remains, so every surviving assignment must avoid D/C0.
+    // Forbid D from C0: the D,D,D,B,B award is no longer valid under the
+    // original global lowest-base ceiling; only the A,A,A,B,B award remains.
     const forbidden = Array.from({ length: 5 }, (_, t) =>
       Array.from({ length: 5 }, (_, c) => t === 3 && c === 0)
     );
     const res = generateResults(P5, D5, 5, 5, false, { forbidden });
-    expect(res.totalCombos).toBe(2);
+    expect(res.totalCombos).toBe(1);
     expect(res.combinations.every((c) => c.assignment[0] !== 3)).toBe(true);
     expect(res.bestCombo?.total).toBe(366);
   });
@@ -412,5 +412,21 @@ describe("NaN safety", () => {
     for (const combo of res.combinations) {
       expect(Number.isFinite(combo.total)).toBe(true);
     }
+  });
+});
+
+describe("scalable large-grid path", () => {
+  it("keeps 10 contracts and 20 tenderers exact without enumerating 20^10 leaves", () => {
+    const n = 10;
+    const m = 20;
+    const prices = Array.from({ length: m }, () => Array(n).fill(100));
+    const discounts = Array.from({ length: m }, () =>
+      Array.from({ length: n }, () => Array(n).fill(0))
+    );
+    const result = generateResults(prices, discounts, n, m);
+    expect(result.status).toBe("ok");
+    expect(result.bestCombo?.total).toBe(1000);
+    expect(result.combinationsTruncated).toBe(true);
+    expect(result.combinations).toHaveLength(1);
   });
 });

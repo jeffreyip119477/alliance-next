@@ -8,6 +8,9 @@ export interface PdfReportOptions {
   tendererNames?: string[];
   contractNames?: string[];
   whatIf?: { changes: Array<{ t: number; c: number; tier: number; deltaPct: number }> };
+  forced?: (number | null)[];
+  forbidden?: boolean[][];
+  selectedContracts?: number[];
 }
 
 type Orientation = "portrait" | "landscape";
@@ -220,7 +223,12 @@ export const generateResultsPdf = async (results: Results, opts: PdfReportOption
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
   rgb(doc, COLORS.ink);
-  const readout = results.bestCombo ? `The recommended alliance is ${money(results.totalSelectedDiscounted)}, saving ${money(results.costSaving)} against the standalone base minimum. ${results.nicheCombos.length ? `${results.nicheCombos.length} niche optimization${results.nicheCombos.length === 1 ? " is" : "s are"} also available for review.` : "No niche optimization was identified."}` : "No valid combination was found for the current input grid.";
+  const constrained = (opts.forced?.some((v) => v != null) ?? false) || (opts.forbidden?.some((row) => row.some(Boolean)) ?? false);
+  const readout = results.status === "infeasible"
+    ? "No compliant combination was found. No saving is reported because every selected contract must remain within its original lowest submitted base price."
+    : results.bestCombo
+      ? `The recommended alliance is ${money(results.totalSelectedDiscounted)}, saving ${money(results.costSaving)} against the standalone base minimum.${constrained ? " Award constraints were applied." : ""} ${results.nicheCombos.length ? `${results.nicheCombos.length} niche optimization${results.nicheCombos.length === 1 ? " is" : "s are"} also available for review.` : "No niche optimization was identified."}`
+      : "No valid combination was found for the current input grid.";
   doc.text(doc.splitTextToSize(readout, contentWidth(orientation) - 28), MARGIN + 14, y + 34);
 
   orientation = "landscape";
@@ -325,7 +333,9 @@ export const generateResultsPdf = async (results: Results, opts: PdfReportOption
   doc.addPage("a4", orientation);
   page++;
   headerFooter(doc, orientation, title, page);
-  y = sectionTitle(doc, orientation, "Strategy Matrix Explorer", `All ${results.combinations.length.toLocaleString()} valid scenarios, ranked by grand total. Best and niche strategies are tagged for quick review.`);
+  y = sectionTitle(doc, orientation, "Strategy Matrix Explorer", results.combinationsTruncated
+    ? "The grid was solved exactly with a scalable best-award algorithm; the full assignment set was not materialized."
+    : `All ${results.combinations.length.toLocaleString()} valid scenarios, ranked by grand total. Best and niche strategies are tagged for quick review.`);
   const compact = (value: string, max = 14) => value.length > max ? `${value.slice(0, max - 1)}.` : value;
   const strategyRows = results.combinations.map((combo, index) => {
     const profile = combo.isGlobalBest ? "GLOBAL BEST" : combo.isNicheOptimization ? "NICHE" : "SPLIT VARIANT";
@@ -351,18 +361,17 @@ export const generateResultsPdf = async (results: Results, opts: PdfReportOption
   return doc.output("blob");
 };
 
-export const downloadResultsPdf = (results: Results, opts: PdfReportOptions = {}): void => {
+export const downloadResultsPdf = async (results: Results, opts: PdfReportOptions = {}): Promise<void> => {
   if (typeof document === "undefined") throw new Error("downloadResultsPdf requires a DOM environment (browser)");
   const stamp = localDateStamp(new Date());
   const filename = `Alliance Combinations Report_${stamp}.pdf`;
-  void generateResultsPdf(results, opts).then((blob) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  });
+  const blob = await generateResultsPdf(results, opts);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 };
