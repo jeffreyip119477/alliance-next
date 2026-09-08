@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { computeWinStats } from "../analytics";
-import type { Results, Combination } from "../alliance-combinations";
+import { computeWinStats } from "../domain/analytics";
+import type { Results, Combination } from "../domain/alliance-combinations";
 
 // ---------------------------------------------------------------------------
 // Hand-crafted minimal Results: 2 contracts, 2 active tenderers (+ 1 inactive

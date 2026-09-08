@@ -5,6 +5,12 @@ contract's original lowest submitted base price. Pins, blocks, and maximum-win
 constraints can therefore make a scenario infeasible rather than authorizing a
 higher price.
 
+The calculator supports manual and random input, contract selection, tenderer
+constraints, calculation history, what-if analysis, showcase data, dark mode,
+and PDF reporting. Calculator-specific code lives under
+`src/features/alliance-calculator`; shared UI primitives remain under
+`src/components/ui`.
+
 For large grids (up to 10 contracts × 20 tenderers), the calculator uses an
 exact subset dynamic-programming solver to find the best compliant award. It
 does not materialize every assignment in that case; the result explains when
@@ -27,7 +33,8 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The application entrypoint is `src/app/page.tsx`; the calculator implementation
+is composed from the feature modules under `src/features/alliance-calculator`.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 

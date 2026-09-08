@@ -17,7 +17,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Calculator, Clock, Trash2, X } from "lucide-react";
-import type { HistoryItem } from "@/hooks/useAllianceCombinations";
+import type { HistoryItem } from "../../types";
 
 export interface HistorySidebarProps {
   history: HistoryItem[];

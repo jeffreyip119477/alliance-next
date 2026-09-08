@@ -8,7 +8,7 @@ import dynamic from "next/dynamic";
 // hydration-mismatch warnings, including ones caused by browser extensions
 // injecting attributes into <input> nodes before React loads (e.g. data-sharkid).
 const AllianceCombinationsCalculator = dynamic(
-  () => import("@/components/alliance-combinations"),
+  () => import("@/features/alliance-calculator"),
   { ssr: false }
 );
 

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest run"
+    "test": "vitest run --configLoader runner"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.15",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { generateResults } from "../alliance-combinations";
-import { cloneShowcaseDataset, SHOWCASE_DATASET } from "../showcase-data";
+import { generateResults } from "../domain/alliance-combinations";
+import { cloneShowcaseDataset, SHOWCASE_DATASET } from "../domain/showcase-data";
 
 describe("built-in showcase dataset", () => {
   it("covers every contract with a complete bid and discount matrix", () => {

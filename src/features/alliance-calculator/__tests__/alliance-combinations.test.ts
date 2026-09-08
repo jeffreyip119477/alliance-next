@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { generateResults } from "../alliance-combinations";
-import { projectToSelectedContracts } from "../projection";
+import { generateResults } from "../domain/alliance-combinations";
+import { projectToSelectedContracts } from "../domain/projection";
 
 // ---------------------------------------------------------------------------
 // Fixture: 5 contracts x 5 tenderers — the canonical A=3 / B=2 scenario.

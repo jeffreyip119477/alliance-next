@@ -7,8 +7,8 @@
 //
 // Exits non-zero if any check fails.
 
-import { generateResults } from "../src/lib/alliance-combinations.ts";
-import { projectToSelectedContracts } from "../src/lib/projection.ts";
+import { generateResults } from "../src/features/alliance-calculator/domain/alliance-combinations.ts";
+import { projectToSelectedContracts } from "../src/features/alliance-calculator/domain/projection.ts";
 
 let failures = 0;
 let passes = 0;
@@ -119,7 +119,14 @@ console.log("edge cases");
   const sparseP = P5.map((r) => r.map((v, c) => (c < 2 ? v : 0)));
   const sparseD = D5.map((t) => t.map(() => [0, 0, 0, 0, 0]));
   const sres = generateResults(sparseP, sparseD, 5, 5);
-  check("sparse grid -> bestCombo present, TLB=200", sres.bestCombo !== null && sres.totalLowestBase === 200, `TLB=${sres.totalLowestBase}`);
+  check(
+    "sparse grid -> infeasible with missing contracts",
+    sres.bestCombo === null &&
+      sres.status === "infeasible" &&
+      eq(sres.infeasibleContracts, [2, 3, 4]) &&
+      sres.costSaving === 0,
+    `TLB=${sres.totalLowestBase}`
+  );
 }
 
 // --- random parity vs brute force ---
@@ -217,7 +224,7 @@ console.log("constraints");
 
   const forbidden = Array.from({ length: 5 }, (_, t) => Array.from({ length: 5 }, (_, c) => t === 3 && c === 0));
   const r2 = generateResults(P5, D5, 5, 5, false, { forbidden });
-  check("forbid D on C0 -> best remains 366 and no result uses D/C0", r2.totalCombos === 2 && r2.bestCombo?.total === 366 && r2.combinations.every((c) => c.assignment[0] !== 3));
+  check("forbid D on C0 -> only A/A/A/B/B remains", r2.totalCombos === 1 && r2.bestCombo?.total === 366 && r2.combinations.every((c) => c.assignment[0] !== 3));
 
   const r3 = generateResults(P5, D5, 5, 5, false, { maxWins: [2, 5, 5, 5, 5] });
   check("maxWins A=2 -> best 426, A capped", r3.bestCombo?.total === 426 && r3.combinations.every((c) => c.tendererCounts[0] <= 2));
