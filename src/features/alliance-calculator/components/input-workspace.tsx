@@ -14,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -29,6 +30,8 @@ import {
   Calculator,
   Database,
   Settings,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { PriceGrid } from "./inputs/price-grid";
 import { DiscountGrid } from "./inputs/discount-grid";
@@ -71,6 +74,8 @@ export interface InputWorkspaceProps {
   setForbidden: React.Dispatch<React.SetStateAction<boolean[][]>>;
   setMaxWins: React.Dispatch<React.SetStateAction<number[]>>;
   showAbbreviatedAmounts: boolean;
+  showMatrixAdjustments: boolean;
+  onToggleMatrixAdjustments: () => void;
   formatCurrency: ResultsView["format"];
   handlePriceChange: (t: number, c: number, value: string) => void;
   handleDiscountChange: (t: number, c: number, dop: number, value: string) => void;
@@ -113,6 +118,8 @@ export function InputWorkspace({
   setForbidden,
   setMaxWins,
   showAbbreviatedAmounts,
+  showMatrixAdjustments,
+  onToggleMatrixAdjustments,
   formatCurrency,
   handlePriceChange,
   handleDiscountChange,
@@ -170,14 +177,28 @@ export function InputWorkspace({
 
       <TabsContent value="manual" className="space-y-6">
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Settings className="h-5 w-5" />
-              Configuration
-            </CardTitle>
-            <CardDescription>
-              Set up the parameters for your alliance calculation
-            </CardDescription>
+          <CardHeader className="flex flex-row items-start justify-between gap-4">
+            <div className="space-y-1.5">
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="h-5 w-5" />
+                Configuration
+              </CardTitle>
+              <CardDescription>
+                Set up the parameters for your alliance calculation
+              </CardDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="shrink-0"
+              onClick={onToggleMatrixAdjustments}
+              aria-label={showMatrixAdjustments ? "Hide matrix Add and Save amounts" : "Show matrix Add and Save amounts"}
+              aria-pressed={showMatrixAdjustments}
+              title={showMatrixAdjustments ? "Hide matrix Add and Save amounts" : "Show matrix Add and Save amounts"}
+            >
+              {showMatrixAdjustments ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+              <span className="hidden sm:inline">{showMatrixAdjustments ? "Hide adjustments" : "Show adjustments"}</span>
+            </Button>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -368,6 +389,8 @@ export function InputWorkspace({
           setPriceMax={setPriceMax}
           discountMax={discountMax}
           setDiscountMax={setDiscountMax}
+          showMatrixAdjustments={showMatrixAdjustments}
+          onToggleMatrixAdjustments={onToggleMatrixAdjustments}
           useAverageDOP={useAverageDOP}
           setUseAverageDOP={setUseAverageDOP}
           fastMode={fastMode}

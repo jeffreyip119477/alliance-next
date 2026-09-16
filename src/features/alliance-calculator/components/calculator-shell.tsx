@@ -70,6 +70,7 @@ export default function AllianceCombinationsCalculator() {
   } = useAllianceCombinations();
 
   const [showAbbreviatedAmounts, setShowAbbreviatedAmounts] = useState(false);
+  const [showMatrixAdjustments, setShowMatrixAdjustments] = useState(false);
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
 
   const historyProps = {
@@ -152,6 +153,8 @@ export default function AllianceCombinationsCalculator() {
           setForbidden={setForbidden}
           setMaxWins={setMaxWins}
           showAbbreviatedAmounts={showAbbreviatedAmounts}
+          showMatrixAdjustments={showMatrixAdjustments}
+          onToggleMatrixAdjustments={() => setShowMatrixAdjustments((value) => !value)}
           formatCurrency={formatCurrency}
           handlePriceChange={handlePriceChange}
           handleDiscountChange={handleDiscountChange}
@@ -179,6 +182,7 @@ export default function AllianceCombinationsCalculator() {
             displayedCombinations={displayedCombinations}
             onLoadMore={loadMoreCombinations}
             onToggleAbbreviated={setShowAbbreviatedAmounts}
+            showMatrixAdjustments={showMatrixAdjustments}
             comparison={comparison}
             onSnapshot={setComparisonSnapshot}
             onClearComparison={() => setComparison(null)}

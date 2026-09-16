@@ -23,7 +23,7 @@ export function CalculatorHeader({
     <header className="mb-8 flex flex-row items-center justify-between gap-3">
       <div>
         <h1 className="text-2xl font-bold">Alliance Combinations Calculator</h1>
-        <p className="text-sm text-muted-foreground">v4.0.0</p>
+        <p className="text-sm text-muted-foreground">v4.0.1</p>
       </div>
       <div className="flex items-center gap-2">
         {hasResults && (

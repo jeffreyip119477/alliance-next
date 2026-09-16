@@ -17,6 +17,7 @@ export interface ResultsSectionProps {
   displayedCombinations: number;
   onLoadMore: () => void;
   onToggleAbbreviated: (b: boolean) => void;
+  showMatrixAdjustments: boolean;
   comparison: Results | null;
   onSnapshot: () => void;
   onClearComparison: () => void;
@@ -31,6 +32,7 @@ export function ResultsSection({
   displayedCombinations,
   onLoadMore,
   onToggleAbbreviated,
+  showMatrixAdjustments,
   comparison,
   onSnapshot,
   onClearComparison,
@@ -49,7 +51,7 @@ export function ResultsSection({
         hasBaseline={comparison !== null}
       />
       <BasePricesReferenceCard view={view} />
-      <DiscountMatrixCard view={view} />
+      <DiscountMatrixCard view={view} showAdjustments={showMatrixAdjustments} />
       <BestComboCard view={view} />
       <ComboExplorerCard
         view={view}

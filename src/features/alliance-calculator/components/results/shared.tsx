@@ -28,6 +28,8 @@ import {
   CheckCircle2,
   Ban,
   X,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { computeWinStats } from "../../domain/analytics";
 import type { Results } from "../../domain/alliance-combinations";
@@ -64,6 +66,8 @@ export {
   CheckCircle2,
   Ban,
   X,
+  Eye,
+  EyeOff,
   computeWinStats,
   isSelectedIn,
   lowestBaseFor,
@@ -77,9 +81,13 @@ export const varianceIndicator = (
   currentCost: number,
   lowestBasePrice: number,
   format: ResultsView["format"],
-  showAbbreviated: boolean
+  showAbbreviated: boolean,
+  showAdjustment = true
 ): ReactNode => {
   const variance = Number((lowestBasePrice - currentCost).toFixed(2));
+  if (!showAdjustment && variance !== 0) {
+    return null;
+  }
   if (variance > 0) {
     return (
       <div className="mt-0.5 text-[10px] font-bold text-emerald-500">

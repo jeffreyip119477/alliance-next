@@ -18,7 +18,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Database, Loader2 } from "lucide-react";
+import { Database, Eye, EyeOff, Loader2 } from "lucide-react";
 
 export interface RandomPanelProps {
   contracts: number;
@@ -31,6 +31,8 @@ export interface RandomPanelProps {
   setPriceMax: (n: number) => void;
   discountMax: number;
   setDiscountMax: (n: number) => void;
+  showMatrixAdjustments: boolean;
+  onToggleMatrixAdjustments: () => void;
   useAverageDOP: boolean;
   setUseAverageDOP: (b: boolean) => void;
   fastMode: boolean;
@@ -51,6 +53,8 @@ export function RandomPanel({
   setPriceMax,
   discountMax,
   setDiscountMax,
+  showMatrixAdjustments,
+  onToggleMatrixAdjustments,
   useAverageDOP,
   setUseAverageDOP,
   fastMode,
@@ -61,14 +65,28 @@ export function RandomPanel({
 }: RandomPanelProps) {
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Database className="h-5 w-5" />
-          Random Data Generation
-        </CardTitle>
-        <CardDescription>
-          Generate random data for testing and simulation purposes.
-        </CardDescription>
+      <CardHeader className="flex flex-row items-start justify-between gap-4">
+        <div className="space-y-1.5">
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-5 w-5" />
+            Random Data Generation
+          </CardTitle>
+          <CardDescription>
+            Generate random data for testing and simulation purposes.
+          </CardDescription>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="shrink-0"
+          onClick={onToggleMatrixAdjustments}
+          aria-label={showMatrixAdjustments ? "Hide matrix Add and Save amounts" : "Show matrix Add and Save amounts"}
+          aria-pressed={showMatrixAdjustments}
+          title={showMatrixAdjustments ? "Hide matrix Add and Save amounts" : "Show matrix Add and Save amounts"}
+        >
+          {showMatrixAdjustments ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+          <span className="hidden sm:inline">{showMatrixAdjustments ? "Hide adjustments" : "Show adjustments"}</span>
+        </Button>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-6 md:grid-cols-2">

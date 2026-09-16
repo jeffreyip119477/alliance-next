@@ -3,7 +3,13 @@
 import { useMemo, Card, CardContent, CardDescription, CardHeader, CardTitle, Ban, isSelectedIn, lowestBasePrices, resultColumnFor, varianceIndicator } from "./shared";
 import type { ResultsView } from "./shared";
 
-export function DiscountMatrixCard({ view }: { view: ResultsView }) {
+export function DiscountMatrixCard({
+  view,
+  showAdjustments,
+}: {
+  view: ResultsView;
+  showAdjustments: boolean;
+}) {
   const lbp = useMemo(() => lowestBasePrices(view), [view]);
   const tierCount =
     view.selectedContracts.length > 0 ? view.selectedContracts.length : view.contracts;
@@ -106,7 +112,8 @@ export function DiscountMatrixCard({ view }: { view: ResultsView }) {
                               amount,
                               lbp[c],
                               view.format,
-                              view.showAbbreviated
+                              view.showAbbreviated,
+                              showAdjustments
                             )}
                           </div>
                         </td>
@@ -122,4 +129,3 @@ export function DiscountMatrixCard({ view }: { view: ResultsView }) {
     </Card>
   );
 }
-
